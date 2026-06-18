@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Diagnostic Fedlex v9 - dates reelles + explorer les manifestations versionnees.
+Diagnostic Fedlex v10 - isEmbodiedBy + /fr/xml (pas /akn/fr/xml).
 Lance : python diagnose_fedlex.py > diag_output.txt 2>&1
 """
 import urllib.request, urllib.parse, json, sys, io
@@ -10,6 +10,9 @@ sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="repla
 SPARQL = "https://fedlex.data.admin.ch/sparqlendpoint"
 UA = "gsass-rag/1.0"
 BASE = "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184"
+# Dates recentes connues (les plus recentes en vigueur)
+DATES = ["20260101", "20250101", "20240516", "20240301", "20240101",
+         "20230101", "20220101", "20210701"]
 
 def sparql(query, label="", timeout=25):
     if label:
@@ -40,97 +43,98 @@ def sparql(query, label="", timeout=25):
         print()
         return []
 
-def try_dl(url, timeout=20):
+def try_dl(url, label="", timeout=20):
     try:
-        req = urllib.request.Request(url, headers={"Accept": "application/xml,*/*", "User-Agent": UA})
+        req = urllib.request.Request(url, headers={
+            "Accept": "application/xml, text/xml, */*",
+            "User-Agent": UA
+        })
         with urllib.request.urlopen(req, timeout=timeout) as r:
-            body = r.read(500)
+            body = r.read(800)
             ct = r.headers.get("Content-Type", "?")
+            final = r.url
         txt = body.decode("utf-8", errors="replace")
         is_xml = "<?xml" in txt or "<akomaNtoso" in txt or "<akn:" in txt
-        return is_xml, ct, txt
+        tag = "XML!" if is_xml else "HTML/autre"
+        print("  " + (label or url) + " => [" + tag + "] CT=" + ct)
+        if final != url:
+            print("    redirect vers: " + final)
+        if is_xml:
+            print("    DEBUT: " + txt[:300])
+        return is_xml, txt, final
     except urllib.error.HTTPError as e:
-        return None, str(e.code), ""
+        print("  " + (label or url) + " => HTTP " + str(e.code))
+        return None, None, None
     except Exception as e:
-        return None, str(e), ""
+        print("  " + (label or url) + " => ERR " + str(e))
+        return None, None, None
 
 print("=" * 60)
-print("  DIAGNOSTIC FEDLEX v9")
+print("  DIAGNOSTIC FEDLEX v10")
 print("=" * 60)
 print()
 
-# 1. Toutes les versions datees de la LIFD (tri desc)
-rows = sparql("""PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
-SELECT ?version WHERE {
-  ?version jolux:isMemberOf <""" + BASE + """> .
-} ORDER BY DESC(?version) LIMIT 20""", "1. Toutes versions datees LIFD (tri desc)")
+# 1. Proprietes de la manifestation XML (isEmbodiedBy)
+manif_xml = BASE + "/20290101/fr/xml"
+sparql("SELECT ?p ?o WHERE { <" + manif_xml + "> ?p ?o } LIMIT 20",
+       "1. Proprietes de la manifestation XML 20290101")
 
-dates = []
-for row in rows:
-    uri = row.get("version", {}).get("value", "")
-    if uri:
-        dates.append(uri.split("/")[-1])
-
-print("Dates extraites: " + str(dates))
-print()
-
-# 2. Explorer une version recente - toutes ses proprietes
-if dates:
-    most_recent = dates[0]
-    version_uri = BASE + "/" + most_recent
-    sparql("""SELECT ?p ?o WHERE {
-  GRAPH <""" + version_uri + """/graph> {
-    <""" + version_uri + """> ?p ?o
-  }
-} LIMIT 30""", "2. Proprietes de la version " + most_recent)
-
-    # 3. L'expression FR de cette version
-    expr_fr = version_uri + "/fr"
-    sparql("SELECT ?p ?o WHERE { <" + expr_fr + "> ?p ?o } LIMIT 20",
-           "3. Expression FR de la version")
-
-    # 4. Les manifestations de cette expression versionnee
-    rows4 = sparql("""PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
-SELECT ?manif ?p ?o WHERE {
-  <""" + expr_fr + """> jolux:hasManifestation ?manif .
-  ?manif ?p ?o .
-} LIMIT 30""", "4. Manifestations de l'expression versionnee FR")
-
-    # 5. Si on a des manifestations, chercher les URLs de fichier
-    if rows4:
-        manif_uris = list(set(r["manif"]["value"] for r in rows4))
-        print("Manifestations trouvees: " + str(manif_uris))
-        print()
-        for m in manif_uris[:3]:
-            sparql("SELECT ?p ?o WHERE { <" + m + "> ?p ?o } LIMIT 20",
-                   "5. Proprietes de la manifestation " + m.split("/")[-1])
-
-# 6. Tester les URLs XML avec les vraies dates
-print("--- 6. Telechargement XML avec vraies dates ---")
-print()
-for d in dates[:8]:
-    url = BASE + "/" + d + "/fr/akn/fr/xml"
-    ok, ct, txt = try_dl(url)
-    if ok:
-        print("  " + d + " => XML! CT=" + ct)
-        print("  DEBUT: " + txt[:200])
-        print("  *** URL TROUVEE: " + url + " ***")
-        print()
-        break
-    else:
-        print("  " + d + " => " + ct)
-
-# 7. Chercher isExemplifiedBy sur toutes versions
+# 2. isEmbodiedBy sur toutes versions + trouver les URLs de download
 sparql("""PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
-SELECT ?version ?expr ?manif ?url WHERE {
+SELECT ?version ?manif ?p ?val WHERE {
   ?version jolux:isMemberOf <""" + BASE + """> ;
            jolux:isRealizedBy ?expr .
   ?expr jolux:language <http://publications.europa.eu/resource/authority/language/FRA> ;
-        jolux:hasManifestation ?manif .
-  ?manif jolux:isExemplifiedBy ?url .
-} ORDER BY DESC(?version) LIMIT 10""", "7. isExemplifiedBy sur versions datees")
+        jolux:isEmbodiedBy ?manif .
+  ?manif jolux:userFormat ?fmt .
+  FILTER(CONTAINS(str(?fmt), "xml") || CONTAINS(str(?manif), "xml"))
+  ?manif ?p ?val .
+} ORDER BY DESC(?version) LIMIT 20""", "2. Manifestations XML via isEmbodiedBy")
+
+# 3. Tester le bon chemin /fr/xml (pas /akn/fr/xml)
+print("--- 3. Telechargement avec /fr/xml ---")
+print()
+xml_found = None
+for d in DATES:
+    url = BASE + "/" + d + "/fr/xml"
+    ok, txt, final = try_dl(url, d)
+    if ok:
+        xml_found = (url, txt)
+        break
+print()
+
+# 4. Essayer aussi sur fedlex.admin.ch (le site principal)
+if not xml_found:
+    print("--- 4. Memes URLs sur fedlex.admin.ch ---")
+    print()
+    for d in DATES[:4]:
+        url = "https://fedlex.admin.ch/eli/cc/1991/1184_1184_1184/" + d + "/fr/xml"
+        ok, txt, final = try_dl(url, d + " (fedlex.admin.ch)")
+        if ok:
+            xml_found = (url, txt)
+            break
+    print()
+
+# 5. Chercher l'URL reelle du fichier dans les proprietes de la manifestation
+if not xml_found:
+    print("--- 5. Chercher URL fichier dans proprietes manifestation ---")
+    rows = sparql("""PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
+SELECT ?manif ?p ?val WHERE {
+  <""" + BASE + """/20260101/fr> jolux:isEmbodiedBy ?manif .
+  ?manif ?p ?val .
+  FILTER(isIRI(?val) || CONTAINS(str(?val), "http"))
+} LIMIT 20""", "5a. Proprietes IRI de la manifestation XML 20260101")
+    for row in rows:
+        val = row.get("val", {}).get("value", "")
+        if "http" in val and ("xml" in val or "file" in val or "download" in val):
+            print("  Tentative: " + val)
+            try_dl(val, "URL depuis RDF")
+
+if xml_found:
+    print()
+    print("*** XML ACCESSIBLE: " + xml_found[0] + " ***")
 
 print()
 print("=" * 60)
-print("  FIN v9")
+print("  FIN v10")
 print("=" * 60)
