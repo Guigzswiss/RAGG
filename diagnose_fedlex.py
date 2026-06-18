@@ -47,9 +47,11 @@ try:
     })
     with urllib.request.urlopen(req, timeout=30) as resp:
         raw = resp.read()
+    print(f"HTTP OK — {len(raw)} octets reçus")
+    print(f"Début réponse brute : {raw[:300]}")
     data = json.loads(raw)
     bindings = data.get("results", {}).get("bindings", [])
-    print(f"OK — {len(bindings)} résultat(s)")
+    print(f"JSON parsé — {len(bindings)} résultat(s)")
     for i, b in enumerate(bindings):
         expr = b.get("expression", {}).get("value", "?")
         title = b.get("title", {}).get("value", "?")
@@ -57,14 +59,22 @@ try:
         print(f"       title      : {title}")
     expression_uri = bindings[0]["expression"]["value"] if bindings else None
 except urllib.error.HTTPError as e:
+    body = e.read(500).decode("utf-8", errors="replace")
     print(f"ERREUR HTTP {e.code} : {e.reason}")
+    print(f"Corps : {body}")
     expression_uri = None
 except Exception as e:
     print(f"ERREUR : {e}")
     expression_uri = None
 
+# Si SPARQL échoue, essayer l'URL connue directement
 if not expression_uri:
-    print("\nSPARQL échoué — impossible de continuer.")
+    print("\nSPARQL échoué — tentative avec l'URI connue de la LIFD...")
+    expression_uri = "https://fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr"
+    print(f"URI de secours : {expression_uri}")
+
+if not expression_uri:
+    print("\nSPARQL et URI de secours échoués — impossible de continuer.")
     sys.exit(1)
 
 # ── 2. Construction de l'URL XML ──────────────────────────────────────────────
