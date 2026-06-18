@@ -1,119 +1,144 @@
 # -*- coding: utf-8 -*-
 """
-Diagnostic Fedlex v4 - cible fedlex.data.admin.ch (backend Casemates).
+Diagnostic Fedlex v5 - trouve l'URL reelle du fichier XML via SPARQL Virtuoso.
 Lance : python diagnose_fedlex.py > diag_output.txt 2>&1
-Copie diag_output.txt dans le chat.
 """
 import urllib.request, urllib.parse, urllib.error, json, sys, io
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
+SPARQL = "https://fedlex.data.admin.ch/sparqlendpoint"
 UA = "gsass-rag/1.0"
-LIFD = "cc/1991/1184_1184_1184"
 
-def get(url, headers, method="GET", data=None):
-    try:
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req, timeout=20) as r:
-            body = r.read(1000)
-            ct = r.headers.get("Content-Type","?")
-            final_url = r.url
-        txt = body.decode("utf-8", errors="replace")
-        is_html = txt.strip().startswith("<!") or "<html" in txt[:100]
-        status = "HTML" if is_html else "CONTENU"
-        print("  " + method + " " + url)
-        print("  => HTTP 200 [" + status + "] CT=" + ct)
-        if not is_html:
-            print("  DEBUT: " + txt[:400])
-        return txt, not is_html
-    except urllib.error.HTTPError as e:
-        print("  " + method + " " + url + " => HTTP " + str(e.code))
-        return None, False
-    except Exception as e:
-        print("  " + method + " " + url + " => ERR " + str(e))
-        return None, False
-
-print("=" * 60)
-print("  DIAGNOSTIC FEDLEX v4")
-print("=" * 60)
-print()
-
-# ── 1. SPARQL sur fedlex.data.admin.ch ───────────────────────────────────────
-print("--- 1. SPARQL sur fedlex.data.admin.ch ---")
-print()
-query = "SELECT ?s WHERE { ?s ?p ?o } LIMIT 1"
-
-sparql_urls = [
-    "https://fedlex.data.admin.ch/sparql",
-    "https://fedlex.data.admin.ch/sparqlendpoint",
-    "https://fedlex.data.admin.ch/query",
-    "https://fedlex.data.admin.ch/api/sparql",
-    "https://fedlex.data.admin.ch/repositories/FEDLEX",
-]
-for url in sparql_urls:
+def sparql(query):
     data = urllib.parse.urlencode({"query": query}).encode()
-    txt, ok = get(url, {"Accept":"application/sparql-results+json","Content-Type":"application/x-www-form-urlencoded","User-Agent":UA}, "POST", data)
-    if ok:
-        print("  *** SPARQL FONCTIONNE ICI ***")
-    print()
-
-# ── 2. Fichiers XML sur fedlex.data.admin.ch ──────────────────────────────────
-print("--- 2. Fichiers XML sur fedlex.data.admin.ch ---")
-print()
-file_urls = [
-    "https://fedlex.data.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD + "/fr/akn/fr/xml",
-    "https://fedlex.data.admin.ch/eli/" + LIFD + "/fr/akn/fr/xml",
-    "https://fedlex.data.admin.ch/eli/" + LIFD + "/fr",
-    "https://fedlex.data.admin.ch/filestore/eli/" + LIFD + "/fr/akn/fr/xml",
-]
-for url in file_urls:
-    txt, ok = get(url, {"Accept":"application/xml, */*","User-Agent":UA})
-    if ok:
-        print("  *** XML TROUVE ***")
-        print("  DEBUT XML: " + txt[:500])
-    print()
-
-# ── 3. HEAD requests pour voir les vrais redirects ────────────────────────────
-print("--- 3. HEAD requests (pour voir les redirects) ---")
-print()
-head_urls = [
-    "https://www.fedlex.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD + "/fr/akn/fr/xml",
-    "https://fedlex.data.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD + "/fr/akn/fr/xml",
-]
-
-class NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-opener = urllib.request.build_opener(NoRedirect)
-for url in head_urls:
-    try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent":UA})
-        with opener.open(req, timeout=10) as r:
-            loc = r.headers.get("Location","(pas de redirect)")
-            ct  = r.headers.get("Content-Type","?")
-            print("  HEAD " + url)
-            print("  => " + str(r.status) + " CT=" + ct + " Location=" + loc)
-    except urllib.error.HTTPError as e:
-        loc = e.headers.get("Location","") if e.headers else ""
-        print("  HEAD " + url + " => HTTP " + str(e.code) + " Location=" + loc)
-    except Exception as e:
-        print("  HEAD " + url + " => ERR " + str(e))
-    print()
-
-# ── 4. Verifier si l'API REST Fedlex existe ───────────────────────────────────
-print("--- 4. API REST Fedlex ---")
-print()
-api_urls = [
-    "https://fedlex.data.admin.ch/mam/api/",
-    "https://fedlex.data.admin.ch/mam/api/v1/",
-    "https://fedlex.data.admin.ch/api/",
-    "https://fedlex.data.admin.ch/cgi-bin/broker.pl?userhome=home&action=home&language=fr",
-]
-for url in api_urls:
-    get(url, {"Accept":"application/json, text/html","User-Agent":UA})
-    print()
+    req = urllib.request.Request(SPARQL, data=data, headers={
+        "Accept": "application/sparql-results+json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": UA,
+    })
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read())
 
 print("=" * 60)
-print("  FIN DIAGNOSTIC v4")
+print("  DIAGNOSTIC FEDLEX v5 - Exploration RDF")
+print("=" * 60)
+
+# ── 1. Trouver les expressions de la LIFD (SR 642.11) ─────────────────────────
+print()
+print("--- 1. Expressions LIFD ---")
+q1 = """
+PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
+PREFIX schema: <http://schema.org/>
+SELECT ?work ?expr ?title WHERE {
+  ?work jolux:classifiedByTaxonomyEntry
+        <https://fedlex.admin.ch/vocabulary/legal-taxonomy/642.11> ;
+        jolux:hasExpression ?expr .
+  ?expr jolux:language
+        <http://publications.europa.eu/resource/authority/language/FRA> ;
+        schema:name ?title .
+}
+LIMIT 5
+"""
+r1 = sparql(q1)
+bindings = r1["results"]["bindings"]
+print(str(len(bindings)) + " expression(s):")
+for b in bindings:
+    print("  work : " + b.get("work",{}).get("value","?"))
+    print("  expr : " + b.get("expr",{}).get("value","?"))
+    print("  title: " + b.get("title",{}).get("value","?"))
+    print()
+
+if not bindings:
+    print("Aucune expression - arret.")
+    sys.exit(1)
+
+expr_uri = bindings[0]["expr"]["value"]
+print("Expression retenue: " + expr_uri)
+
+# ── 2. Trouver les manifestations de cette expression ─────────────────────────
+print()
+print("--- 2. Manifestations ---")
+q2 = """
+PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
+SELECT ?manif ?format ?url WHERE {
+  <""" + expr_uri + """> jolux:hasManifestation ?manif .
+  OPTIONAL { ?manif jolux:userFormat ?format }
+  OPTIONAL { ?manif jolux:isExemplifiedBy ?url }
+}
+"""
+r2 = sparql(q2)
+manifests = r2["results"]["bindings"]
+print(str(len(manifests)) + " manifestation(s):")
+for m in manifests:
+    fmt = m.get("format",{}).get("value","?")
+    url = m.get("url",{}).get("value","?")
+    manif = m.get("manif",{}).get("value","?")
+    print("  format: " + fmt)
+    print("  url   : " + url)
+    print("  manif : " + manif)
+    print()
+
+# ── 3. Explorer toutes les proprietes d'une manifestation ─────────────────────
+print()
+print("--- 3. Toutes les proprietes de la 1ere manifestation ---")
+if manifests:
+    manif_uri = manifests[0]["manif"]["value"]
+    q3 = "SELECT ?p ?o WHERE { <" + manif_uri + "> ?p ?o }"
+    r3 = sparql(q3)
+    for b in r3["results"]["bindings"]:
+        print("  " + b["p"]["value"].split("/")[-1].split("#")[-1] + " = " + b["o"]["value"])
+
+# ── 4. Chercher directement les URLs de fichiers XML ──────────────────────────
+print()
+print("--- 4. Recherche directe des URLs XML ---")
+q4 = """
+PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
+SELECT ?manif ?p ?url WHERE {
+  <""" + expr_uri + """> jolux:hasManifestation ?manif .
+  ?manif ?p ?url .
+  FILTER(isIRI(?url) && (
+    CONTAINS(str(?url), "xml") ||
+    CONTAINS(str(?url), "akn") ||
+    CONTAINS(str(?url), "filestore")
+  ))
+}
+"""
+r4 = sparql(q4)
+print(str(len(r4["results"]["bindings"])) + " URL(s) avec xml/akn/filestore:")
+for b in r4["results"]["bindings"]:
+    print("  prop: " + b["p"]["value"].split("#")[-1])
+    print("  url : " + b["url"]["value"])
+    print()
+
+# ── 5. Tester le telechargement de la premiere URL XML trouvee ────────────────
+xml_url = None
+for b in r4["results"]["bindings"]:
+    u = b["url"]["value"]
+    if "xml" in u.lower() or "akn" in u.lower():
+        xml_url = u
+        break
+
+if xml_url:
+    print("--- 5. Tentative de telechargement ---")
+    print("URL: " + xml_url)
+    try:
+        req = urllib.request.Request(xml_url, headers={
+            "Accept": "application/xml, */*",
+            "User-Agent": UA
+        })
+        with urllib.request.urlopen(req, timeout=30) as r:
+            body = r.read(500)
+            ct = r.headers.get("Content-Type","?")
+        txt = body.decode("utf-8", errors="replace")
+        is_xml = "<?xml" in txt or "<akn" in txt or "<akomaNtoso" in txt
+        print("CT: " + ct)
+        print("XML detecte: " + str(is_xml))
+        print("Debut: " + txt[:300])
+    except Exception as e:
+        print("ERREUR: " + str(e))
+
+print()
+print("=" * 60)
+print("  FIN v5")
 print("=" * 60)
