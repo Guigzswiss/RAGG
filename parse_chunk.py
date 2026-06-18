@@ -48,24 +48,24 @@ def parse_akn_xml(xml_content: str, law_sr: str, law_name: str,
     except ET.ParseError as e:
         raise ValueError(f"XML invalide : {e}") from e
 
-    # Chercher tous les éléments <article> quelle que soit la profondeur
-    for tag in ("akn:article", "article"):
-        prefix = "{http://docs.oasis-open.org/legaldocml/ns/akn/3.0}" if "akn:" in tag else ""
-        for art in root.iter(f"{prefix}article"):
-            art_id = art.get("eId") or art.get("id") or "?"
-            text = _text_of(art).strip()
-            if not text:
-                continue
-            chunks.append(ArticleChunk(
-                law_sr=law_sr,
-                law_name=law_name,
-                article_id=art_id,
-                text=text,
-                url=url,
-                version_date=version_date,
-            ))
-        if chunks:
-            break
+    # Namespace AKN 3.0 utilisé par Fedlex
+    AKN_NS = "{http://docs.oasis-open.org/legaldocml/ns/akn/3.0}"
+
+    for art in root.iter(f"{AKN_NS}article"):
+        # eId Fedlex : "art_1", "art_16a", etc. → normaliser en "art. 1", "art. 16a"
+        raw_id = art.get("eId") or art.get("id") or "?"
+        art_id = raw_id.replace("art_", "art. ").replace("__", " al. ")
+        text = _text_of(art).strip()
+        if not text:
+            continue
+        chunks.append(ArticleChunk(
+            law_sr=law_sr,
+            law_name=law_name,
+            article_id=art_id,
+            text=text,
+            url=url,
+            version_date=version_date,
+        ))
 
     return chunks
 

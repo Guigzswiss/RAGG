@@ -1,9 +1,17 @@
 """
 Ingestion du droit fédéral suisse depuis Fedlex (SPARQL + XML Akoma Ntoso).
+
+Endpoint SPARQL : https://fedlex.data.admin.ch/sparqlendpoint  (Virtuoso)
+Modèle RDF     : Work → Consolidation (version datée) → Expression (langue)
+                 → Manifestation (format) → isExemplifiedBy (URL du fichier)
 """
 from __future__ import annotations
 from typing import List
 from parse_chunk import ArticleChunk, parse_akn_xml, parse_sample
+
+# ── Endpoint correct (fedlex.data.admin.ch, pas fedlex.admin.ch) ──────────────
+FEDLEX_SPARQL = "https://fedlex.data.admin.ch/sparqlendpoint"
+UA = "gsass-rag/1.0 (fiduciaire genevoise; contact: guillaume.droz06@gmail.com)"
 
 # ── Échantillon LIFD pour les tests hors-ligne ────────────────────────────────
 SAMPLE_LIFD = [
@@ -14,8 +22,8 @@ SAMPLE_LIFD = [
             "Sont assujetties à cet impôt les personnes physiques qui ont leur domicile "
             "ou leur séjour en Suisse au regard du droit fiscal."
         ),
-        "url": "https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr",
-        "version_date": "2024-01-01",
+        "url": "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184/fr",
+        "version_date": "2026-01-01",
     },
     {
         "id": "art. 16",
@@ -26,8 +34,8 @@ SAMPLE_LIFD = [
             "marchandises qu'il prélève dans son exploitation commerciale et qui sont destinés à sa "
             "consommation personnelle; ces prestations sont estimées à leur valeur marchande."
         ),
-        "url": "https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr",
-        "version_date": "2024-01-01",
+        "url": "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184/fr",
+        "version_date": "2026-01-01",
     },
     {
         "id": "art. 33",
@@ -38,8 +46,8 @@ SAMPLE_LIFD = [
             "ou de fait ainsi que les contributions d'entretien versées à l'un des parents pour les "
             "enfants sur lesquels il a l'autorité parentale."
         ),
-        "url": "https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr",
-        "version_date": "2024-01-01",
+        "url": "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184/fr",
+        "version_date": "2026-01-01",
     },
     {
         "id": "art. 49",
@@ -49,8 +57,8 @@ SAMPLE_LIFD = [
             "d'après la présente loi. Il en va de même pour les associations, fondations et "
             "autres personnes morales."
         ),
-        "url": "https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr",
-        "version_date": "2024-01-01",
+        "url": "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184/fr",
+        "version_date": "2026-01-01",
     },
     {
         "id": "art. 57",
@@ -61,68 +69,105 @@ SAMPLE_LIFD = [
             "du solde du compte de résultats qui ne servent pas à couvrir des dépenses justifiées "
             "par l'usage commercial."
         ),
-        "url": "https://www.fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr",
-        "version_date": "2024-01-01",
+        "url": "https://fedlex.data.admin.ch/eli/cc/1991/1184_1184_1184/fr",
+        "version_date": "2026-01-01",
     },
 ]
 
 
 def load_sample_lifd() -> List[ArticleChunk]:
-    """Retourne l'échantillon LIFD sous forme de chunks."""
+    """Retourne l'échantillon LIFD sous forme de chunks (test hors-ligne)."""
     return parse_sample(SAMPLE_LIFD, law_sr="642.11", law_name="LIFD")
+
+
+def _sparql_query(query: str) -> list:
+    """Exécute une requête SPARQL sur fedlex.data.admin.ch et retourne les bindings."""
+    import urllib.request
+    import urllib.parse
+    import json
+
+    data = urllib.parse.urlencode({"query": query}).encode()
+    req = urllib.request.Request(
+        FEDLEX_SPARQL,
+        data=data,
+        headers={
+            "Accept": "application/sparql-results+json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": UA,
+        },
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        result = json.loads(resp.read())
+    return result["results"]["bindings"]
 
 
 def fetch_law_from_fedlex(sr: str) -> List[ArticleChunk]:
     """
-    Télécharge une loi depuis Fedlex via SPARQL puis parse le XML Akoma Ntoso.
-    Requiert une connexion internet.
+    Télécharge la dernière version consolidée d'une loi fédérale depuis Fedlex.
+
+    Paramètre :
+        sr  Numéro SR, ex. "642.11" pour la LIFD.
+
+    Retourne une liste d'ArticleChunk (un par article).
     """
     import urllib.request
-    import urllib.parse
-    import json
-    from config import FEDLEX_SPARQL
 
-    # 1. Trouver l'URI de la dernière version consolidée via SPARQL
-    sparql_query = f"""
-    PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
-    PREFIX schema: <http://schema.org/>
-    SELECT ?expression ?title WHERE {{
-      ?work jolux:classifiedByTaxonomyEntry <https://fedlex.admin.ch/vocabulary/legal-taxonomy/{sr}> ;
-            jolux:hasExpression ?expression .
-      ?expression jolux:language <http://publications.europa.eu/resource/authority/language/FRA> ;
-                  schema:name ?title .
-    }}
-    LIMIT 1
-    """
-    params = urllib.parse.urlencode({
-        "query": sparql_query,
-        "format": "application/sparql-results+json"
-    })
-    req = urllib.request.Request(
-        f"{FEDLEX_SPARQL}?{params}",
-        headers={"Accept": "application/sparql-results+json"}
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        data = json.loads(resp.read())
-
-    bindings = data.get("results", {}).get("bindings", [])
+    # ── Étape 1 : trouver l'URL du fichier XML via SPARQL ─────────────────────
+    # Modèle : Work (historicalLegalId=SR) → Consolidation (version datée)
+    #          → Expression (FR) → Manifestation (XML) → isExemplifiedBy (URL)
+    query = f"""
+PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
+SELECT ?version ?title ?xml_url WHERE {{
+  ?work jolux:historicalLegalId "{sr}" ;
+        jolux:isRealizedBy ?base_expr .
+  ?base_expr jolux:language <http://publications.europa.eu/resource/authority/language/FRA> .
+  OPTIONAL {{ ?base_expr jolux:title ?title }}
+  ?version jolux:isMemberOf ?work ;
+           jolux:isRealizedBy ?expr .
+  ?expr jolux:language <http://publications.europa.eu/resource/authority/language/FRA> ;
+        jolux:isEmbodiedBy ?manif .
+  ?manif jolux:userFormat <https://fedlex.data.admin.ch/vocabulary/user-format/xml> ;
+         jolux:isExemplifiedBy ?xml_url .
+}}
+ORDER BY DESC(?version)
+LIMIT 1
+"""
+    bindings = _sparql_query(query)
     if not bindings:
-        raise ValueError(f"Aucune expression trouvée pour SR {sr}")
+        raise ValueError(
+            f"Aucune version XML trouvée pour SR {sr}. "
+            "Vérifiez le numéro SR (ex. '642.11') et la connexion."
+        )
 
-    expression_uri = bindings[0]["expression"]["value"]
-    title = bindings[0].get("title", {}).get("value", sr)
+    xml_url = bindings[0]["xml_url"]["value"]
+    title = bindings[0].get("title", {}).get("value", f"SR {sr}")
+    version_uri = bindings[0].get("version", {}).get("value", "")
+    version_date = version_uri.split("/")[-1] if version_uri else ""
+    # Formater la date : "20260101" → "2026-01-01"
+    if len(version_date) == 8 and version_date.isdigit():
+        version_date = f"{version_date[:4]}-{version_date[4:6]}-{version_date[6:]}"
 
-    # 2. Construire l'URL du XML Akoma Ntoso
-    xml_url = expression_uri.replace("/eli/", "/filestore/fedlex.data.admin.ch/eli/") + "/akn/fr/xml"
+    canonical_url = f"https://fedlex.data.admin.ch/eli/cc/{version_uri.split('/eli/cc/')[-1].rstrip('/fr/xml')}" if "/eli/cc/" in version_uri else version_uri
 
-    req2 = urllib.request.Request(xml_url, headers={"Accept": "application/xml"})
-    with urllib.request.urlopen(req2, timeout=60) as resp:
-        xml_content = resp.read().decode("utf-8")
+    print(f"  Loi       : {title} (SR {sr})")
+    print(f"  Version   : {version_date}")
+    print(f"  Fichier   : {xml_url}")
 
+    # ── Étape 2 : télécharger le fichier XML ───────────────────────────────────
+    req = urllib.request.Request(
+        xml_url,
+        headers={"Accept": "application/xml, */*", "User-Agent": UA},
+    )
+    with urllib.request.urlopen(req, timeout=120) as resp:
+        xml_content = resp.read().decode("utf-8", errors="replace")
+
+    print(f"  XML       : {len(xml_content)} caractères téléchargés")
+
+    # ── Étape 3 : parser le XML Akoma Ntoso ───────────────────────────────────
     return parse_akn_xml(
         xml_content,
         law_sr=sr,
         law_name=title,
-        url=expression_uri,
-        version_date="",
+        url=canonical_url,
+        version_date=version_date,
     )

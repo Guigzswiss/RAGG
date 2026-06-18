@@ -30,4 +30,4 @@ TOP_K_FINAL: int = 5
 RRF_K: int = 60
 
 # ── Fedlex ────────────────────────────────────────────────────────────────────
-FEDLEX_SPARQL: str = "https://fedlex.admin.ch/sparqlendpoint"
+FEDLEX_SPARQL: str = "https://fedlex.data.admin.ch/sparqlendpoint"
