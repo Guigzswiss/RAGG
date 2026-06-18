@@ -17,11 +17,25 @@ class InfomaniakEmbedder:
         self.client = OpenAI(api_key=token, base_url=base_url)
         self.model = model
 
+    # bge_multilingual_gemma2 context window is 8192 tokens; truncate conservatively
+    MAX_CHARS = 6000
+    BATCH_SIZE = 32
+
+    def _clean(self, text: str) -> str:
+        # Strip null bytes and truncate
+        text = text.replace("\x00", " ").strip()
+        return text[: self.MAX_CHARS] if len(text) > self.MAX_CHARS else text
+
     def embed(self, texts: List[str]) -> List[List[float]]:
         if not texts:
             return []
-        response = self.client.embeddings.create(model=self.model, input=texts)
-        return [item.embedding for item in response.data]
+        texts = [self._clean(t) for t in texts]
+        results = []
+        for i in range(0, len(texts), self.BATCH_SIZE):
+            batch = texts[i : i + self.BATCH_SIZE]
+            response = self.client.embeddings.create(model=self.model, input=batch)
+            results.extend(item.embedding for item in response.data)
+        return results
 
     def embed_one(self, text: str) -> List[float]:
         return self.embed([text])[0]

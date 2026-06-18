@@ -31,12 +31,23 @@ class HybridIndex:
 
     # ── Indexation ────────────────────────────────────────────────────────────
 
+    UPSERT_BATCH = 100
+
     def add_chunks(self, chunks: List[ArticleChunk]) -> None:
         if not chunks:
             return
+        total = len(chunks)
+        for start in range(0, total, self.UPSERT_BATCH):
+            batch = chunks[start : start + self.UPSERT_BATCH]
+            end = min(start + self.UPSERT_BATCH, total)
+            print(f"  Embedding articles {start + 1}–{end} / {total}...")
+            self._add_batch(batch, start)
+        self._bm25 = None
+
+    def _add_batch(self, chunks: List[ArticleChunk], offset: int) -> None:
         texts = [c.text for c in chunks]
         embeddings = self.embedder.embed(texts)
-        ids = [f"{c.law_sr}_{c.article_id}_{i}" for i, c in enumerate(chunks)]
+        ids = [f"{c.law_sr}_{c.article_id}_{offset + i}" for i, c in enumerate(chunks)]
         metadatas = [
             {
                 "law_sr": c.law_sr,
@@ -49,7 +60,6 @@ class HybridIndex:
         ]
         self.collection.upsert(ids=ids, embeddings=embeddings,
                                documents=texts, metadatas=metadatas)
-        self._bm25 = None  # invalider le cache BM25
 
     # ── BM25 interne ─────────────────────────────────────────────────────────
 
