@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Diagnostic Fedlex - a lancer sur ta machine Windows AVANT l'indexation.
+Diagnostic Fedlex v3 - teste plusieurs patterns d'URL et de SPARQL.
 Lance : python diagnose_fedlex.py > diag_output.txt 2>&1
-Puis ouvre diag_output.txt et copie le contenu dans le chat.
+Copie diag_output.txt dans le chat.
 """
 import urllib.request
 import urllib.parse
@@ -11,159 +11,172 @@ import json
 import sys
 import io
 
-# Forcer UTF-8 pour la sortie (evite les erreurs cp1252 sur Windows)
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-SR = "642.11"
-SPARQL_ENDPOINT = "https://fedlex.admin.ch/sparqlendpoint"
-# URL XML connue de la LIFD (utilisee si SPARQL echoue)
-FALLBACK_URI = "https://fedlex.admin.ch/eli/cc/1991/1184_1184_1184/fr"
-
-def section(title):
-    print()
-    print("=" * 60)
-    print("  " + title)
-    print("=" * 60)
-
-# ── 1. SPARQL (POST) ──────────────────────────────────────────────────────────
-section("1. REQUETE SPARQL (POST)")
-
-query = """
-PREFIX jolux: <http://data.legilux.public.lu/resource/ontology/jolux#>
-PREFIX schema: <http://schema.org/>
-SELECT ?expression ?title WHERE {
-  ?work jolux:classifiedByTaxonomyEntry <https://fedlex.admin.ch/vocabulary/legal-taxonomy/642.11> ;
-        jolux:hasExpression ?expression .
-  ?expression jolux:language <http://publications.europa.eu/resource/authority/language/FRA> ;
-              schema:name ?title .
-}
-LIMIT 5
-"""
-
-post_data = urllib.parse.urlencode({"query": query}).encode("utf-8")
-expression_uri = None
-
-try:
-    req = urllib.request.Request(
-        SPARQL_ENDPOINT,
-        data=post_data,
-        headers={
-            "Accept": "application/sparql-results+json",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "User-Agent": "gsass-rag-diagnostic/1.0",
-        }
-    )
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        raw = resp.read()
-    print("HTTP OK - " + str(len(raw)) + " octets recus")
-    print("Debut reponse : " + raw[:200].decode("utf-8", errors="replace"))
-    data = json.loads(raw)
-    bindings = data.get("results", {}).get("bindings", [])
-    print("JSON parse - " + str(len(bindings)) + " resultat(s)")
-    for i, b in enumerate(bindings):
-        expr = b.get("expression", {}).get("value", "?")
-        title = b.get("title", {}).get("value", "?")
-        print("  [" + str(i) + "] expression : " + expr)
-        print("       title      : " + title)
-    if bindings:
-        expression_uri = bindings[0]["expression"]["value"]
-except urllib.error.HTTPError as e:
-    body = e.read(300).decode("utf-8", errors="replace")
-    print("ERREUR HTTP " + str(e.code) + " : " + str(e.reason))
-    print("Corps : " + body)
-except Exception as e:
-    print("ERREUR : " + str(e))
-
-if not expression_uri:
-    print("\nSPARQL echoue - utilisation de l'URI de secours...")
-    expression_uri = FALLBACK_URI
-    print("URI : " + expression_uri)
-
-# ── 2. URL XML ────────────────────────────────────────────────────────────────
-section("2. URL DU XML AKOMA NTOSO")
-
-candidates = [
-    expression_uri.replace("/eli/", "/filestore/fedlex.data.admin.ch/eli/") + "/akn/fr/xml",
-    expression_uri + "/akn/fr/xml",
-]
-
-print("Expression URI : " + expression_uri)
-print()
-working_url = None
-for i, candidate in enumerate(candidates):
-    print("Candidat " + str(i+1) + " : " + candidate)
+def try_url(label, url, headers):
+    print("  " + label)
+    print("  URL: " + url)
     try:
-        req = urllib.request.Request(candidate, headers={
-            "Accept": "application/xml, text/xml, */*",
-            "User-Agent": "gsass-rag-diagnostic/1.0",
-        })
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            first_bytes = resp.read(500).decode("utf-8", errors="replace")
-        print("  OK! Debut du contenu :")
-        print("    " + first_bytes[:300])
-        working_url = candidate
-        break
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read(800)
+            ct = resp.headers.get("Content-Type", "?")
+        decoded = body.decode("utf-8", errors="replace")
+        print("  HTTP 200 - Content-Type: " + ct)
+        print("  Debut: " + decoded[:300])
+        return decoded, True
     except urllib.error.HTTPError as e:
         print("  HTTP " + str(e.code) + " " + str(e.reason))
+        return None, False
     except Exception as e:
-        print("  ERREUR : " + str(e))
+        print("  ERREUR: " + str(e))
+        return None, False
+    finally:
+        print()
 
-if not working_url:
-    print("\nAucun URL XML ne fonctionne.")
-    sys.exit(1)
+print("=" * 60)
+print("  DIAGNOSTIC FEDLEX v3")
+print("=" * 60)
 
-# ── 3. Structure XML ──────────────────────────────────────────────────────────
-section("3. STRUCTURE XML (50 premieres lignes)")
+LIFD_ELI_ID = "cc/1991/1184_1184_1184"
+UA = "gsass-rag/1.0 (recherche juridique; contact: guillaume.droz06@gmail.com)"
 
-try:
-    req = urllib.request.Request(working_url, headers={
-        "Accept": "application/xml, text/xml, */*",
-        "User-Agent": "gsass-rag-diagnostic/1.0",
-    })
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        xml_content = resp.read().decode("utf-8", errors="replace")
+# ── 1. SPARQL avec differents endpoints ───────────────────────────────────────
+print()
+print("--- 1. SPARQL ---")
 
-    lines = xml_content.splitlines()
-    print("Taille : " + str(len(xml_content)) + " caracteres, " + str(len(lines)) + " lignes")
+query = """SELECT ?expr ?title WHERE {
+  ?work <http://data.legilux.public.lu/resource/ontology/jolux#classifiedByTaxonomyEntry>
+        <https://fedlex.admin.ch/vocabulary/legal-taxonomy/642.11> ;
+        <http://data.legilux.public.lu/resource/ontology/jolux#hasExpression> ?expr .
+  ?expr <http://data.legilux.public.lu/resource/ontology/jolux#language>
+        <http://publications.europa.eu/resource/authority/language/FRA> ;
+        <http://schema.org/name> ?title .
+} LIMIT 3"""
+
+sparql_endpoints = [
+    "https://fedlex.admin.ch/sparqlendpoint",
+    "https://www.fedlex.admin.ch/sparqlendpoint",
+    "https://fedlex.admin.ch/api/sparql",
+]
+
+for ep in sparql_endpoints:
+    post_data = urllib.parse.urlencode({"query": query}).encode()
+    print("  Endpoint: " + ep)
+    try:
+        req = urllib.request.Request(ep, data=post_data, headers={
+            "Accept": "application/sparql-results+json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "User-Agent": UA,
+        })
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read(400)
+            ct = resp.headers.get("Content-Type", "?")
+        decoded = body.decode("utf-8", errors="replace")
+        print("  HTTP 200 - CT: " + ct)
+        print("  Debut: " + decoded[:200])
+        if "{" in decoded and "results" in decoded:
+            print("  => JSON SPARQL detecte!")
+        else:
+            print("  => HTML (SPA) - pas un SPARQL endpoint")
+    except urllib.error.HTTPError as e:
+        print("  HTTP " + str(e.code))
+    except Exception as e:
+        print("  ERREUR: " + str(e))
     print()
-    print("--- DEBUT XML ---")
-    for line in lines[:50]:
-        print(line)
-    print("--- FIN (50 premieres lignes) ---")
 
-    # Namespaces et articles
-    section("4. ELEMENTS 'article'")
-    import xml.etree.ElementTree as ET
-    root = ET.fromstring(xml_content)
+# ── 2. URLs XML directes ──────────────────────────────────────────────────────
+print("--- 2. URLs XML directes ---")
+print()
 
-    ns_found = set()
-    for elem in root.iter():
-        if elem.tag.startswith("{"):
-            ns = elem.tag.split("}")[0][1:]
-            ns_found.add(ns)
-    print("Namespaces :")
-    for ns in sorted(ns_found):
-        print("  " + ns)
+xml_candidates = [
+    ("www + filestore + /akn/fr/xml",
+     "https://www.fedlex.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD_ELI_ID + "/fr/akn/fr/xml",
+     {"Accept": "application/xml", "User-Agent": UA}),
 
-    article_count = 0
-    for elem in root.iter():
-        local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
-        if local == "article":
-            article_count += 1
-            if article_count <= 3:
-                print("\nArticle #" + str(article_count) + " :")
-                print("  tag  : " + elem.tag)
-                print("  eId  : " + str(elem.get("eId", "ABSENT")))
-                print("  id   : " + str(elem.get("id", "ABSENT")))
-                text = " ".join(elem.itertext())[:300]
-                print("  texte: " + text)
+    ("fedlex.admin.ch + filestore + /akn/fr/xml",
+     "https://fedlex.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD_ELI_ID + "/fr/akn/fr/xml",
+     {"Accept": "application/xml", "User-Agent": UA}),
 
-    print("\nTotal elements 'article' : " + str(article_count))
+    ("ELI direct + Accept XML (content negotiation)",
+     "https://www.fedlex.admin.ch/eli/" + LIFD_ELI_ID + "/fr",
+     {"Accept": "application/akn+xml, application/xml;q=0.9", "User-Agent": UA}),
 
-except Exception as e:
-    print("ERREUR parsing XML : " + str(e))
+    ("ELI direct + /akn/fr/xml",
+     "https://www.fedlex.admin.ch/eli/" + LIFD_ELI_ID + "/fr/akn/fr/xml",
+     {"Accept": "application/xml", "User-Agent": UA}),
+
+    ("data.admin.ch filestore direct",
+     "https://fedlex.data.admin.ch/filestore/fedlex.data.admin.ch/eli/" + LIFD_ELI_ID + "/fr/akn/fr/xml",
+     {"Accept": "application/xml", "User-Agent": UA}),
+
+    ("download.admin.ch",
+     "https://www.admin.ch/opc/fr/classified-compilation/19900329/index.html",
+     {"Accept": "text/html", "User-Agent": UA}),
+]
+
+working = []
+for label, url, hdrs in xml_candidates:
+    body, ok = try_url(label, url, hdrs)
+    if ok and body and "<" in body and "html" not in body[:50].lower():
+        working.append((label, url, body))
+        print("  *** POTENTIELLEMENT DU XML ***")
+        print()
+
+# ── 3. Si XML trouve, analyser sa structure ───────────────────────────────────
+if working:
+    print("--- 3. ANALYSE XML ---")
+    for label, url, preview in working:
+        print("Source: " + label)
+        # Telecharger complet
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/xml", "User-Agent": UA})
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                full = resp.read().decode("utf-8", errors="replace")
+            print("Taille: " + str(len(full)) + " chars")
+            lines = full.splitlines()
+            print("Lignes: " + str(len(lines)))
+            print()
+            print("--- 50 premieres lignes ---")
+            for l in lines[:50]:
+                print(l)
+            print("--- fin ---")
+            print()
+
+            import xml.etree.ElementTree as ET
+            root = ET.fromstring(full)
+            ns_found = set()
+            article_count = 0
+            for elem in root.iter():
+                if elem.tag.startswith("{"):
+                    ns_found.add(elem.tag.split("}")[0][1:])
+                local = elem.tag.split("}")[-1] if "}" in elem.tag else elem.tag
+                if local == "article":
+                    article_count += 1
+                    if article_count <= 2:
+                        print("Article #" + str(article_count))
+                        print("  tag : " + elem.tag)
+                        print("  eId : " + str(elem.get("eId", "ABSENT")))
+                        print("  texte: " + " ".join(elem.itertext())[:250])
+                        print()
+            print("Namespaces: " + str(sorted(ns_found)))
+            print("Total articles: " + str(article_count))
+        except Exception as e:
+            print("Erreur analyse: " + str(e))
+else:
+    print("--- Aucun XML trouve. Diagnostic supplementaire ---")
+    print()
+    print("Tentative sur opengov.ch (ancienne API):")
+    try_url("opengov.ch API",
+            "https://api.opengov.ch/api/v1/laws/fr/642.11",
+            {"Accept": "application/json", "User-Agent": UA})
+
+    print("Tentative download direct swisstopo:")
+    try_url("swisstopo fedlex",
+            "https://swisstopo.admin.ch",
+            {"Accept": "text/html", "User-Agent": UA})
 
 print()
 print("=" * 60)
-print("  DIAGNOSTIC TERMINE - copie diag_output.txt dans le chat")
+print("  FIN - copie diag_output.txt dans le chat")
 print("=" * 60)
