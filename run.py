@@ -122,6 +122,32 @@ def cmd_index(sr_list: list[str]):
             print(f"  ERREUR pour SR {sr} : {e}")
 
 
+def cmd_index_ge(refs: list[str]):
+    """Indexe des lois cantonales genevoises depuis ge.ch/legi."""
+    from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED
+    from embedder import InfomaniakEmbedder
+    from canton_ge import fetch_law_from_ge, LOIS_GE
+
+    embedder = InfomaniakEmbedder(INFOMANIAK_BASE_URL, INFOMANIAK_TOKEN, MODEL_EMBED)
+    idx = _make_index(embedder, offline=False)
+
+    # Si "all" → indexer toutes les lois connues
+    if refs == ["all"]:
+        refs = list(LOIS_GE.keys())
+
+    for ref in refs:
+        print(f"\nIndexation GE : {ref}...")
+        try:
+            chunks = fetch_law_from_ge(ref)
+            if not chunks:
+                print(f"  ATTENTION : aucun article extrait pour {ref}")
+                continue
+            idx.add_chunks(chunks)
+            print(f"  {len(chunks)} articles indexés pour {ref}")
+        except Exception as e:
+            print(f"  ERREUR pour {ref} : {e}")
+
+
 def cmd_ask(question: str):
     """Pose une question au moteur RAG."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED, MODEL_CHAT, TOP_K_FINAL
@@ -167,6 +193,11 @@ def main():
             print("Usage : python run.py index <SR> [SR2 ...]")
             sys.exit(1)
         cmd_index(sys.argv[2:])
+    elif cmd == "index-ge":
+        if len(sys.argv) < 3:
+            print("Usage : python run.py index-ge <ref> [ref2 ...]  ou  index-ge all")
+            sys.exit(1)
+        cmd_index_ge(sys.argv[2:])
     elif cmd == "ask":
         if len(sys.argv) < 3:
             print('Usage : python run.py ask "<question>"')
