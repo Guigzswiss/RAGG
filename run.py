@@ -199,15 +199,14 @@ def cmd_cleanup(law_sr: str = "GE-INCONNU"):
         print("Collection introuvable.")
         return
 
-    result = col.get(where={"law_sr": law_sr}, include=["metadatas"])
-    ids = result.get("ids", [])
-    if not ids:
+    before = col.count()
+    col.delete(where={"law_sr": {"$eq": law_sr}})
+    after = col.count()
+    removed = before - after
+    if removed == 0:
         print(f"  Aucune entrée avec law_sr='{law_sr}' trouvée.")
-        return
-
-    print(f"  Suppression de {len(ids)} entrées avec law_sr='{law_sr}'...")
-    col.delete(ids=ids)
-    print(f"  Fait. Total restant : {col.count()} chunks.")
+    else:
+        print(f"  Supprimé : {removed} entrées. Total restant : {after} chunks.")
 
 
 def cmd_ask(question: str):
