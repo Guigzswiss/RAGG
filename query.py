@@ -73,6 +73,33 @@ class RAGEngine:
 
         return queries[:4]  # max 4 requêtes pour limiter les coûts
 
+    def _pinned_articles(self, question: str) -> List[tuple[str, str]]:
+        """
+        Articles fondamentaux à injecter d'office selon le sujet, car le
+        retrieval pur ne les fait pas toujours remonter (ils sont noyés par
+        les circulaires). Liste curée de faits de référence.
+        Format : (law_sr, article_id) tel qu'indexé.
+        """
+        q = question.lower()
+        pins: List[tuple[str, str]] = []
+
+        is_company = any(w in q for w in [
+            "société", " sa", "sa ", "sàrl", "personne morale",
+            "capitaux", "entreprise", "bénéfice", "coopérative",
+        ])
+        is_rate = any(w in q for w in [
+            "taux", "imposition", "impôt", "%", "pourcentage", "combien",
+        ])
+
+        if is_company and is_rate:
+            # Taux fédéral de l'impôt sur le bénéfice (LIFD art. 68 = 8,5%)
+            pins.append(("642.11", "art. 68"))
+            # Taux cantonal genevois (LIPM art. 20 = 3,33%)
+            if any(w in q for w in ["genève", "genevois", "ge ", "cantonal"]):
+                pins.append(("D 3 15", "art. 20"))
+
+        return pins
+
     def ask(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         from config import TOP_K_DENSE, TOP_K_BM25, RRF_K
 
@@ -95,6 +122,16 @@ class RAGEngine:
         # au lieu d'être écrasées par les scores bruts d'une seule requête.
         seen_keys: set = set()
         results = []
+
+        # Articles épinglés (faits de référence) : injectés d'office en tête.
+        for law_sr, art in self._pinned_articles(question):
+            pinned = self.index.get_article(law_sr, art)
+            if pinned:
+                key = f"{law_sr}_{art}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append(pinned)
+
         max_len = max((len(p) for p in partials), default=0)
         for i in range(max_len):
             for p in partials:

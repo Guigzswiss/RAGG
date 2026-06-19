@@ -121,5 +121,20 @@ class HybridIndex:
         return [{"text": doc_store[k][0], "metadata": doc_store[k][1], "score": scores[k]}
                 for k in sorted_keys if k in doc_store]
 
+    def get_article(self, law_sr: str, article_id: str) -> Dict[str, Any] | None:
+        """Récupère un article précis par (law_sr, article_id) via métadonnées."""
+        res = self.collection.get(
+            where={"$and": [
+                {"law_sr": {"$eq": law_sr}},
+                {"article_id": {"$eq": article_id}},
+            ]},
+            include=["documents", "metadatas"],
+        )
+        docs = res.get("documents") or []
+        metas = res.get("metadatas") or []
+        if not docs:
+            return None
+        return {"text": docs[0], "metadata": metas[0], "score": 1.0}
+
     def count(self) -> int:
         return self.collection.count()
