@@ -50,13 +50,16 @@ class RAGEngine:
             queries.append("taux impôt bénéfice société de capitaux")
             queries.append("taux impôt revenu personne physique")
 
-        if any(w in q for w in ["société anonyme", "sa ", "sàrl", "personne morale"]):
+        if any(w in q for w in ["société anonyme", "sa ", "sàrl", "personne morale", " sa\n", "société de capitaux"]):
             queries.append("impôt bénéfice net société de capitaux taux")
-            queries.append("bénéfice imposable société anonyme déductions")
             queries.append("impôt fédéral direct bénéfice net 8.5 sociétés de capitaux")
 
+        if any(w in q for w in ["taux", "impôt", "imposition"]) and any(w in q for w in ["société", " sa", "sàrl", "entreprise", "capital"]):
+            queries.append("impôt fédéral direct bénéfice net 8.5 sociétés de capitaux")
+            queries.append("imposition personnes morales genève taux cantonal lipm")
+
         if any(w in q for w in ["genevois", "genève", "ge ", "cantonal"]):
-            queries.append("imposition personnes morales genève taux cantonal")
+            queries.append("imposition personnes morales genève taux cantonal lipm")
 
         if any(w in q for w in ["déduction", "déduire", "charges"]):
             queries.append("charges justifiées usage commercial déductibles")
