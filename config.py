@@ -24,9 +24,9 @@ CHROMA_DIR: str = "./data/chroma"
 COLLECTION_NAME: str = "swiss_law"
 
 # ── Retrieval ─────────────────────────────────────────────────────────────────
-TOP_K_DENSE: int = 10
-TOP_K_BM25: int = 10
-TOP_K_FINAL: int = 5
+TOP_K_DENSE: int = 15
+TOP_K_BM25: int = 15
+TOP_K_FINAL: int = 8
 RRF_K: int = 60
 
 # ── Fedlex ────────────────────────────────────────────────────────────────────
