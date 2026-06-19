@@ -16,8 +16,8 @@ def _load_token() -> str:
 
 INFOMANIAK_TOKEN: str = _load_token()
 INFOMANIAK_BASE_URL: str = "https://api.infomaniak.com/2/ai/108639/openai/v1"
-MODEL_CHAT: str = "mistralai/Ministral-3-14B-Instruct-2512"
-MODEL_EMBED: str = "bge_multilingual_gemma2"
+MODEL_CHAT: str = "swiss-ai/Apertus-70B-Instruct-2509"
+MODEL_EMBED: str = "Qwen/Qwen3-Embedding-8B"
 
 # ── ChromaDB ──────────────────────────────────────────────────────────────────
 CHROMA_DIR: str = "./data/chroma"
