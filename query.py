@@ -53,6 +53,7 @@ class RAGEngine:
         if any(w in q for w in ["société anonyme", "sa ", "sàrl", "personne morale"]):
             queries.append("impôt bénéfice net société de capitaux taux")
             queries.append("bénéfice imposable société anonyme déductions")
+            queries.append("impôt fédéral direct bénéfice net 8.5 sociétés de capitaux")
 
         if any(w in q for w in ["genevois", "genève", "ge ", "cantonal"]):
             queries.append("imposition personnes morales genève taux cantonal")
