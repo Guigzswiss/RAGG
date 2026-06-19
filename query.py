@@ -76,11 +76,9 @@ class RAGEngine:
     def ask(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         from config import TOP_K_DENSE, TOP_K_BM25, RRF_K
 
-        # Multi-query : on fusionne les résultats de plusieurs requêtes
+        # Multi-query : on exécute chaque sous-requête séparément
         queries = self._expand_queries(question)
-        seen_keys: set = set()
-        results = []
-
+        partials = []
         for q in queries:
             partial = self.index.search(
                 q,
@@ -89,15 +87,28 @@ class RAGEngine:
                 top_k_final=top_k,
                 rrf_k=RRF_K,
             )
-            for r in partial:
-                meta = r["metadata"]
-                key = f"{meta.get('law_sr')}_{meta.get('article_id')}"
-                if key not in seen_keys:
-                    seen_keys.add(key)
-                    results.append(r)
+            partials.append(partial)
 
-        # Trier par score et garder les meilleurs
-        results = sorted(results, key=lambda r: r["score"], reverse=True)[:top_k]
+        # Fusion en tour de rôle : on prend le meilleur résultat de chaque
+        # sous-requête avant de passer au 2e, etc. Ça garantit que les
+        # sous-requêtes ciblées (ex. taux fédéral LIFD) contribuent toujours,
+        # au lieu d'être écrasées par les scores bruts d'une seule requête.
+        seen_keys: set = set()
+        results = []
+        max_len = max((len(p) for p in partials), default=0)
+        for i in range(max_len):
+            for p in partials:
+                if i < len(p):
+                    r = p[i]
+                    meta = r["metadata"]
+                    key = f"{meta.get('law_sr')}_{meta.get('article_id')}"
+                    if key not in seen_keys:
+                        seen_keys.add(key)
+                        results.append(r)
+                if len(results) >= top_k:
+                    break
+            if len(results) >= top_k:
+                break
 
         if not results:
             return {
