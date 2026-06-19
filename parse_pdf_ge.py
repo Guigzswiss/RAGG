@@ -15,22 +15,35 @@ from parse_chunk import ArticleChunk
 
 # ── Détection automatique des lois cantonales ─────────────────────────────────
 _LAW_HINTS = {
-    # Genève
+    # Genève — fiscalité
     "lipp": ("D 3 08", "LIPP"),
     "imposition des personnes physiques": ("D 3 08", "LIPP"),
     "lipm": ("D 3 15", "LIPM"),
     "imposition des personnes morales": ("D 3 15", "LIPM"),
     "lpfisc": ("D 3 17", "LPFisc"),
     "procédure fiscale": ("D 3 17", "LPFisc"),
-    "lmsd": ("D 3 30", "LMSD"),
-    "droits de succession": ("D 3 30", "LMSD"),
     "lcp": ("D 3 05", "LCP"),
     "contributions publiques": ("D 3 05", "LCP"),
+    "centimes additionnels cantonaux": ("D 3 07", "LCACant"),
+    "lcacant": ("D 3 07", "LCACant"),
+    "lefi": ("D 3 10", "LEFI"),
+    "exonérations fiscales": ("D 3 10", "LEFI"),
+    "lpgip": ("D 3 18", "LPGIP"),
+    "perception et garanties": ("D 3 18", "LPGIP"),
+    "lisp": ("D 3 20", "LISP"),
+    "impôt à la source": ("D 3 20", "LISP"),
+    "lds": ("D 3 25", "LDS"),
+    "droits de succession": ("D 3 25", "LDS"),
+    "lde": ("D 3 30", "LDE"),
+    "droits d'enregistrement": ("D 3 30", "LDE"),
+    "lmsd": ("D 3 30", "LDE"),
+    # Genève — autres
+    "lrcv": ("B 6 09", "LRCV"),
+    "redevance": ("B 6 09", "LRCV"),
     # Vaud
     "impôts directs cantonaux": ("RSV 642.11", "LI-VD"),
     "li vd": ("RSV 642.11", "LI-VD"),
     "648.11": ("RSV 648.11", "LHR-VD"),
-    "harmonisation": ("RSV 648.11", "LHR-VD"),
 }
 
 # ── Patterns de découpage ─────────────────────────────────────────────────────
@@ -76,13 +89,31 @@ def _detect_afc_circular(text: str) -> tuple[str, str] | None:
     return None
 
 
-def _detect_law(text: str) -> tuple[str, str]:
-    """Devine la référence et le nom depuis le texte brut (lois cantonales)."""
+def _detect_law(text: str, filename: str = "") -> tuple[str, str]:
+    """Devine la référence et le nom depuis le texte brut, puis le nom de fichier."""
     lower = text[:3000].lower()
     for hint, (ref, name) in _LAW_HINTS.items():
         if hint in lower:
             return ref, name
-    return "PDF-INCONNU", Path("inconnu").stem
+
+    # Fallback : extraire la référence depuis le nom de fichier
+    # Ex: "D3_07_LCACant.pdf" → ("D 3 07", "LCACant")
+    # Ex: "B6_09_LRCV.pdf"   → ("B 6 09", "LRCV")
+    if filename:
+        stem = Path(filename).stem  # "D3_07_LCACant"
+        parts = stem.split("_")
+        if len(parts) >= 3:
+            # Reconstituer la référence : "D3" → "D 3", "07" → "07"
+            prefix = parts[0]  # "D3" ou "B6"
+            number = parts[1]  # "07"
+            law_name = "_".join(parts[2:])  # "LCACant"
+            # Insérer espace dans le préfixe lettres+chiffres : "D3" → "D 3"
+            import re as _re
+            prefix_fmt = _re.sub(r"([A-Z]+)(\d+)", r"\1 \2", prefix)
+            ref = f"{prefix_fmt} {number}"
+            return ref, law_name
+
+    return "GE-INCONNU", "Loi GE"
 
 
 def _parse_by_articles(lines: list[str], law_ref: str, law_name: str,
@@ -192,7 +223,7 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
         return _parse_circular(lines, law_ref, law_name, url)
 
     # 2. Loi cantonale
-    law_ref, law_name = _detect_law(full_text)
+    law_ref, law_name = _detect_law(full_text, pdf_path.name)
     if law_ref.startswith("D ") or law_ref.startswith("RSV"):
         canton = "ge" if law_ref.startswith("D ") else "vd"
         url = f"https://www.{'ge' if canton == 'ge' else 'vd'}.ch/legi/{law_ref.replace(' ', '-')}"
