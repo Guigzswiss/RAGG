@@ -41,16 +41,59 @@ class RAGEngine:
         self.chat_client = chat_client
         self.chat_model = chat_model
 
+    def _expand_queries(self, question: str) -> List[str]:
+        """Génère des sous-requêtes complémentaires pour améliorer le retrieval."""
+        queries = [question]
+        q = question.lower()
+
+        if any(w in q for w in ["taux", "impôt", "imposition", "pourcentage", "%"]):
+            queries.append("taux impôt bénéfice société de capitaux")
+            queries.append("taux impôt revenu personne physique")
+
+        if any(w in q for w in ["société anonyme", "sa ", "sàrl", "personne morale"]):
+            queries.append("impôt bénéfice net société de capitaux taux")
+            queries.append("bénéfice imposable société anonyme déductions")
+
+        if any(w in q for w in ["genevois", "genève", "ge ", "cantonal"]):
+            queries.append("imposition personnes morales genève taux cantonal")
+
+        if any(w in q for w in ["déduction", "déduire", "charges"]):
+            queries.append("charges justifiées usage commercial déductibles")
+            queries.append("provisions amortissements déduction bénéfice")
+
+        if any(w in q for w in ["tva", "taxe sur la valeur ajoutée"]):
+            queries.append("taux TVA chiffre d'affaires assujetti")
+
+        if any(w in q for w in ["avs", "assurance vieillesse", "cotisation"]):
+            queries.append("cotisation AVS taux indépendant salarié")
+
+        return queries[:4]  # max 4 requêtes pour limiter les coûts
+
     def ask(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         from config import TOP_K_DENSE, TOP_K_BM25, RRF_K
 
-        results = self.index.search(
-            question,
-            top_k_dense=TOP_K_DENSE,
-            top_k_bm25=TOP_K_BM25,
-            top_k_final=top_k,
-            rrf_k=RRF_K,
-        )
+        # Multi-query : on fusionne les résultats de plusieurs requêtes
+        queries = self._expand_queries(question)
+        seen_keys: set = set()
+        results = []
+
+        for q in queries:
+            partial = self.index.search(
+                q,
+                top_k_dense=TOP_K_DENSE,
+                top_k_bm25=TOP_K_BM25,
+                top_k_final=top_k,
+                rrf_k=RRF_K,
+            )
+            for r in partial:
+                meta = r["metadata"]
+                key = f"{meta.get('law_sr')}_{meta.get('article_id')}"
+                if key not in seen_keys:
+                    seen_keys.add(key)
+                    results.append(r)
+
+        # Trier par score et garder les meilleurs
+        results = sorted(results, key=lambda r: r["score"], reverse=True)[:top_k]
 
         if not results:
             return {
