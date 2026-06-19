@@ -1,5 +1,10 @@
 """
-Parsing des lois cantonales genevoises depuis des fichiers PDF locaux.
+Parsing de PDFs juridiques locaux :
+  - Lois cantonales genevoises (ge.ch/legi)
+  - Lois cantonales vaudoises (vd.ch)
+  - Circulaires AFC (estv.admin.ch)
+  - Tout autre PDF structuré par articles ou sections numérotées
+
 Nécessite : pip install pdfplumber
 """
 from __future__ import annotations
@@ -8,8 +13,9 @@ from pathlib import Path
 from typing import List
 from parse_chunk import ArticleChunk
 
-# Détection automatique loi/nom depuis le texte du PDF
+# ── Détection automatique des lois cantonales ─────────────────────────────────
 _LAW_HINTS = {
+    # Genève
     "lipp": ("D 3 08", "LIPP"),
     "imposition des personnes physiques": ("D 3 08", "LIPP"),
     "lipm": ("D 3 15", "LIPM"),
@@ -18,46 +24,70 @@ _LAW_HINTS = {
     "procédure fiscale": ("D 3 17", "LPFisc"),
     "lmsd": ("D 3 30", "LMSD"),
     "droits de succession": ("D 3 30", "LMSD"),
-    "succession": ("D 3 30", "LMSD"),
     "lcp": ("D 3 05", "LCP"),
     "contributions publiques": ("D 3 05", "LCP"),
+    # Vaud
+    "impôts directs cantonaux": ("RSV 642.11", "LI-VD"),
+    "li vd": ("RSV 642.11", "LI-VD"),
+    "648.11": ("RSV 648.11", "LHR-VD"),
+    "harmonisation": ("RSV 648.11", "LHR-VD"),
 }
 
+# ── Patterns de découpage ─────────────────────────────────────────────────────
+
+# Articles de loi : Art. 1, Art. 16a, Art. 205bis
 _ART_RE = re.compile(
     r"^art(?:icle)?\.?\s+(\d+\s*[a-z]?(?:\s*(?:bis|ter|quater|quinquies))?)\b",
     re.IGNORECASE,
 )
 
+# Circulaires AFC — sections numérotées : "1.", "1.1", "2.3.4", "I.", "II."
+_CIRC_SECTION_RE = re.compile(
+    r"^(\d+(?:\.\d+)*\.?|[IVX]{1,5}\.)\s+(.+)$"
+)
+
+# Détection circulaire AFC dans le texte
+_CIRC_RE = re.compile(
+    r"circulaire\s+n[o°]?\s*(\d+)",
+    re.IGNORECASE,
+)
+_CIRC_DATE_RE = re.compile(
+    r"circulaire\s+n[o°]?\s*(\d+)\s+du\s+(.+?)(?:\n|—|-|–)",
+    re.IGNORECASE,
+)
+
+
+def _detect_afc_circular(text: str) -> tuple[str, str] | None:
+    """Retourne (ref, name) si le PDF est une circulaire AFC, sinon None."""
+    header = text[:2000]
+    m_full = _CIRC_DATE_RE.search(header)
+    if m_full:
+        num = m_full.group(1)
+        return f"AFC-Circ-{num}", f"Circulaire AFC n° {num}"
+    m = _CIRC_RE.search(header)
+    if m:
+        num = m.group(1)
+        return f"AFC-Circ-{num}", f"Circulaire AFC n° {num}"
+    # Détection par mots-clés AFC
+    lower = header.lower()
+    if "administration fédérale des contributions" in lower or "afc" in lower:
+        if "circulaire" in lower or "kreisschreiben" in lower or "circolare" in lower:
+            return "AFC-Circ-?", "Circulaire AFC"
+    return None
+
 
 def _detect_law(text: str) -> tuple[str, str]:
-    """Devine la référence et le nom de la loi depuis le texte brut."""
+    """Devine la référence et le nom depuis le texte brut (lois cantonales)."""
     lower = text[:3000].lower()
     for hint, (ref, name) in _LAW_HINTS.items():
         if hint in lower:
             return ref, name
-    return "GE-INCONNU", "Loi GE"
+    return "PDF-INCONNU", Path("inconnu").stem
 
 
-def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
-    """Parse un PDF de loi genevoise et retourne un chunk par article."""
-    try:
-        import pdfplumber
-    except ImportError:
-        raise ImportError("pip install pdfplumber")
-
-    with pdfplumber.open(pdf_path) as pdf:
-        pages_text = []
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                pages_text.append(t)
-
-    full_text = "\n".join(pages_text)
-    law_ref, law_name = _detect_law(full_text)
-    url = f"https://www.ge.ch/document/{law_ref.replace(' ', '-')}/consulter"
-
-    # Découper par article
-    lines = full_text.splitlines()
+def _parse_by_articles(lines: list[str], law_ref: str, law_name: str,
+                        url: str) -> List[ArticleChunk]:
+    """Découpe par articles (Art. N)."""
     chunks: List[ArticleChunk] = []
     current_art: str | None = None
     current_lines: list[str] = []
@@ -67,12 +97,9 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
             text = " ".join(" ".join(current_lines).split())
             if len(text) > 20:
                 chunks.append(ArticleChunk(
-                    law_sr=law_ref,
-                    law_name=law_name,
-                    article_id=current_art,
-                    text=text,
-                    url=url,
-                    version_date="",
+                    law_sr=law_ref, law_name=law_name,
+                    article_id=current_art, text=text,
+                    url=url, version_date="",
                 ))
 
     for line in lines:
@@ -81,15 +108,110 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
         if m:
             flush()
             current_art = "art. " + m.group(1).strip().lower()
-            # Texte sur la même ligne après le numéro d'article
             rest = stripped[m.end():].strip()
             current_lines = [rest] if rest else []
         elif current_art is not None:
-            # Ignorer les lignes de pagination (numéro seul, entêtes courts)
             if stripped and not re.match(r"^\d+$", stripped) and len(stripped) > 3:
                 current_lines.append(stripped)
 
     flush()
+    return chunks
+
+
+def _parse_circular(lines: list[str], law_ref: str, law_name: str,
+                    url: str) -> List[ArticleChunk]:
+    """
+    Découpe une circulaire AFC par sections numérotées (1., 1.1, 2.3, etc.)
+    Chaque section de niveau 1 ou 2 devient un chunk.
+    """
+    chunks: List[ArticleChunk] = []
+    current_id: str | None = None
+    current_title: str = ""
+    current_lines: list[str] = []
+
+    def flush():
+        if current_id and current_lines:
+            text = current_title + " " + " ".join(" ".join(current_lines).split())
+            text = text.strip()
+            if len(text) > 30:
+                chunks.append(ArticleChunk(
+                    law_sr=law_ref, law_name=law_name,
+                    article_id=current_id, text=text,
+                    url=url, version_date="",
+                ))
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or re.match(r"^\d+$", stripped):
+            continue
+        m = _CIRC_SECTION_RE.match(stripped)
+        if m:
+            num = m.group(1).rstrip(".")
+            depth = num.count(".") + 1 if "." in num else 1
+            # On ne crée des chunks qu'aux 2 premiers niveaux pour éviter la fragmentation
+            if depth <= 2:
+                flush()
+                current_id = f"§ {num}"
+                current_title = m.group(2).strip()
+                current_lines = []
+            elif current_id is not None:
+                current_lines.append(stripped)
+        elif current_id is not None:
+            current_lines.append(stripped)
+
+    flush()
+
+    # Fallback : si trop peu de sections détectées, essayer par articles
+    if len(chunks) < 3:
+        return _parse_by_articles(lines, law_ref, law_name, url)
+
+    return chunks
+
+
+def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
+    """
+    Parse un PDF juridique (loi cantonale ou circulaire AFC).
+    Détecte automatiquement le type et adapte le découpage.
+    """
+    try:
+        import pdfplumber
+    except ImportError:
+        raise ImportError("pip install pdfplumber")
+
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = [p.extract_text() for p in pdf.pages if p.extract_text()]
+
+    full_text = "\n".join(pages_text)
+    lines = full_text.splitlines()
+
+    # 1. Circulaire AFC ?
+    circ = _detect_afc_circular(full_text)
+    if circ:
+        law_ref, law_name = circ
+        url = "https://www.estv.admin.ch/estv/fr/home/direkt-bundessteuer/fachinformationen/kreisschreiben.html"
+        return _parse_circular(lines, law_ref, law_name, url)
+
+    # 2. Loi cantonale
+    law_ref, law_name = _detect_law(full_text)
+    if law_ref.startswith("D ") or law_ref.startswith("RSV"):
+        canton = "ge" if law_ref.startswith("D ") else "vd"
+        url = f"https://www.{'ge' if canton == 'ge' else 'vd'}.ch/legi/{law_ref.replace(' ', '-')}"
+    else:
+        url = ""
+
+    chunks = _parse_by_articles(lines, law_ref, law_name, url)
+
+    # Fallback texte brut si rien trouvé
+    if not chunks:
+        text = " ".join(full_text.split())
+        if text:
+            name = pdf_path.stem
+            chunks = [ArticleChunk(
+                law_sr=name, law_name=name,
+                article_id="complet", text=text[:6000],
+                url=url, version_date="",
+            )]
+
     return chunks
 
 
@@ -106,12 +228,13 @@ def parse_pdf_folder(folder: str | Path) -> dict[str, List[ArticleChunk]]:
         print(f"\n  Parsing : {pdf_path.name}")
         try:
             chunks = parse_pdf(pdf_path)
-            print(f"  Articles : {len(chunks)} extraits")
+            print(f"  Chunks  : {len(chunks)} extraits")
             if chunks:
-                print(f"  Loi      : {chunks[0].law_name} ({chunks[0].law_sr})")
+                print(f"  Type    : {chunks[0].law_name} ({chunks[0].law_sr})")
+                print(f"  Premier : {chunks[0].article_id}")
             results[pdf_path.name] = chunks
         except Exception as e:
-            print(f"  ERREUR   : {e}")
+            print(f"  ERREUR  : {e}")
             results[pdf_path.name] = []
 
     return results
