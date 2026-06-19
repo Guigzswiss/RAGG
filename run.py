@@ -187,6 +187,29 @@ def cmd_reset():
     print("  Prêt. Re-indexe avec : python run.py index <SR> / index-pdf <dossier>")
 
 
+def cmd_cleanup(law_sr: str = "GE-INCONNU"):
+    """Supprime les entrées d'une loi spécifique (par défaut GE-INCONNU) sans toucher au reste."""
+    from config import CHROMA_DIR, COLLECTION_NAME
+    import chromadb
+
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    try:
+        col = client.get_collection(COLLECTION_NAME)
+    except Exception:
+        print("Collection introuvable.")
+        return
+
+    result = col.get(where={"law_sr": law_sr}, include=["metadatas"])
+    ids = result.get("ids", [])
+    if not ids:
+        print(f"  Aucune entrée avec law_sr='{law_sr}' trouvée.")
+        return
+
+    print(f"  Suppression de {len(ids)} entrées avec law_sr='{law_sr}'...")
+    col.delete(ids=ids)
+    print(f"  Fait. Total restant : {col.count()} chunks.")
+
+
 def cmd_ask(question: str):
     """Pose une question au moteur RAG."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED, MODEL_CHAT, TOP_K_FINAL
@@ -244,6 +267,9 @@ def main():
         cmd_index_ge(sys.argv[2:])
     elif cmd == "reset":
         cmd_reset()
+    elif cmd == "cleanup":
+        law_sr = sys.argv[2] if len(sys.argv) > 2 else "GE-INCONNU"
+        cmd_cleanup(law_sr)
     elif cmd == "ask":
         if len(sys.argv) < 3:
             print('Usage : python run.py ask "<question>"')
