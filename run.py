@@ -122,6 +122,30 @@ def cmd_index(sr_list: list[str]):
             print(f"  ERREUR pour SR {sr} : {e}")
 
 
+def cmd_index_pdf(folder: str):
+    """Indexe tous les PDFs de lois cantonales dans un dossier."""
+    from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED
+    from embedder import InfomaniakEmbedder
+    from parse_pdf_ge import parse_pdf_folder
+
+    embedder = InfomaniakEmbedder(INFOMANIAK_BASE_URL, INFOMANIAK_TOKEN, MODEL_EMBED)
+    idx = _make_index(embedder, offline=False)
+
+    print(f"\nParsing des PDFs dans : {folder}")
+    all_chunks = parse_pdf_folder(folder)
+
+    total = 0
+    for filename, chunks in all_chunks.items():
+        if not chunks:
+            continue
+        print(f"\nIndexation de {filename}...")
+        idx.add_chunks(chunks)
+        print(f"  {len(chunks)} articles indexés")
+        total += len(chunks)
+
+    print(f"\nTotal : {total} articles indexés depuis {len(all_chunks)} PDF(s)")
+
+
 def cmd_index_ge(refs: list[str]):
     """Indexe des lois cantonales genevoises depuis ge.ch/legi."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED
@@ -193,6 +217,11 @@ def main():
             print("Usage : python run.py index <SR> [SR2 ...]")
             sys.exit(1)
         cmd_index(sys.argv[2:])
+    elif cmd == "index-pdf":
+        if len(sys.argv) < 3:
+            print("Usage : python run.py index-pdf <dossier>")
+            sys.exit(1)
+        cmd_index_pdf(sys.argv[2])
     elif cmd == "index-ge":
         if len(sys.argv) < 3:
             print("Usage : python run.py index-ge <ref> [ref2 ...]  ou  index-ge all")
