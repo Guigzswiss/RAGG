@@ -172,6 +172,21 @@ def cmd_index_ge(refs: list[str]):
             print(f"  ERREUR pour {ref} : {e}")
 
 
+def cmd_reset():
+    """Vide complètement la collection ChromaDB (pour re-indexer proprement)."""
+    from config import CHROMA_DIR, COLLECTION_NAME
+    import chromadb
+
+    print(f"Suppression de la collection '{COLLECTION_NAME}' dans {CHROMA_DIR}...")
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    try:
+        client.delete_collection(COLLECTION_NAME)
+        print("  Collection supprimée.")
+    except Exception as e:
+        print(f"  Rien à supprimer ou erreur : {e}")
+    print("  Prêt. Re-indexe avec : python run.py index <SR> / index-pdf <dossier>")
+
+
 def cmd_ask(question: str):
     """Pose une question au moteur RAG."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED, MODEL_CHAT, TOP_K_FINAL
@@ -227,6 +242,8 @@ def main():
             print("Usage : python run.py index-ge <ref> [ref2 ...]  ou  index-ge all")
             sys.exit(1)
         cmd_index_ge(sys.argv[2:])
+    elif cmd == "reset":
+        cmd_reset()
     elif cmd == "ask":
         if len(sys.argv) < 3:
             print('Usage : python run.py ask "<question>"')
