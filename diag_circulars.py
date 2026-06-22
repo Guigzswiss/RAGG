@@ -51,7 +51,7 @@ def main() -> None:
             print(f"\n[ERREUR] {pdf.name} : {e}")
             continue
 
-        detected = _detect_afc_circular(full)
+        detected = _detect_afc_circular(full, pdf.name)
         if detected is None:
             status = "NON-CIRCULAIRE (parsé comme loi)"
             ref = None
