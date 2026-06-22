@@ -222,6 +222,39 @@ def _parse_circular(lines: list[str], law_ref: str, law_name: str,
     return chunks
 
 
+def _chunk_raw_text(text: str, law_ref: str, law_name: str, url: str,
+                    max_chars: int = 1500) -> List[ArticleChunk]:
+    """Repli sans perte : découpe un texte brut en parties de taille bornée.
+
+    Utilisé quand ni le découpage par sections ni par articles ne produit
+    de chunk (sinon le document entier serait perdu). On coupe sur des
+    frontières de mots, donc rien n'est tronqué.
+    """
+    words = text.split()
+    chunks: List[ArticleChunk] = []
+    buf: list[str] = []
+    size = 0
+    part = 1
+
+    def flush():
+        nonlocal buf, size, part
+        if buf:
+            chunks.append(ArticleChunk(
+                law_sr=law_ref, law_name=law_name,
+                article_id=f"partie {part}", text=" ".join(buf),
+                url=url, version_date="",
+            ))
+            buf, size, part = [], 0, part + 1
+
+    for w in words:
+        buf.append(w)
+        size += len(w) + 1
+        if size >= max_chars:
+            flush()
+    flush()
+    return chunks
+
+
 def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
     """
     Parse un PDF juridique (loi cantonale ou circulaire AFC).
@@ -243,7 +276,11 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
     if circ:
         law_ref, law_name = circ
         url = "https://www.estv.admin.ch/estv/fr/home/direkt-bundessteuer/fachinformationen/kreisschreiben.html"
-        return _parse_circular(lines, law_ref, law_name, url)
+        chunks = _parse_circular(lines, law_ref, law_name, url)
+        # Repli : circulaire sans section ni article détectés (sinon perdue)
+        if not chunks:
+            chunks = _chunk_raw_text(full_text, law_ref, law_name, url)
+        return chunks
 
     # 2. Loi cantonale
     law_ref, law_name = _detect_law(full_text, pdf_path.name)
