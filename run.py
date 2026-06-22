@@ -209,6 +209,46 @@ def cmd_cleanup(law_sr: str = "GE-INCONNU"):
         print(f"  Supprimé : {removed} entrées. Total restant : {after} chunks.")
 
 
+def cmd_cleanup_circ():
+    """Supprime toutes les circulaires AFC (law_sr commençant par 'AFC-Circ').
+
+    À lancer avant de ré-indexer les circulaires : comme la correction du
+    parsing change le law_sr (AFC-Circ-? → AFC-Circ-155), un simple
+    index-pdf ajouterait les nouveaux chunks à côté des anciens au lieu de
+    les remplacer. On efface donc d'abord tout le bloc AFC-Circ-*.
+    """
+    from config import CHROMA_DIR, COLLECTION_NAME
+    import chromadb
+
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    try:
+        col = client.get_collection(COLLECTION_NAME)
+    except Exception:
+        print("Collection introuvable.")
+        return
+
+    before = col.count()
+    res = col.get(include=["metadatas"])
+    ids = res.get("ids") or []
+    metas = res.get("metadatas") or []
+    to_delete = [
+        ids[i] for i in range(len(ids))
+        if str((metas[i] or {}).get("law_sr", "")).startswith("AFC-Circ")
+    ]
+    if not to_delete:
+        print("  Aucune circulaire AFC trouvée (law_sr 'AFC-Circ*').")
+        return
+
+    BATCH = 500
+    for start in range(0, len(to_delete), BATCH):
+        col.delete(ids=to_delete[start : start + BATCH])
+
+    after = col.count()
+    print(f"  Supprimé : {before - after} chunks de circulaires AFC. "
+          f"Total restant : {after} chunks.")
+    print("  Ré-indexe avec : python run.py index-pdf <dossier_des_circulaires>")
+
+
 def cmd_ask(question: str):
     """Pose une question au moteur RAG."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED, MODEL_CHAT, TOP_K_FINAL
@@ -269,6 +309,8 @@ def main():
     elif cmd == "cleanup":
         law_sr = sys.argv[2] if len(sys.argv) > 2 else "GE-INCONNU"
         cmd_cleanup(law_sr)
+    elif cmd == "cleanup-circ":
+        cmd_cleanup_circ()
     elif cmd == "ask":
         if len(sys.argv) < 3:
             print('Usage : python run.py ask "<question>"')
