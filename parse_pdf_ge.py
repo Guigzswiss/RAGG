@@ -60,28 +60,51 @@ _CIRC_SECTION_RE = re.compile(
 )
 
 # Détection circulaire AFC dans le texte
+# "n° 39", "no. 39", "n 39a" : le point après "no" et un suffixe de lettre
+# (199a) sont tolérés.
 _CIRC_RE = re.compile(
-    r"circulaire\s+n[o°]?\s*(\d+)",
+    r"circulaire\s+n[o°]?\.?\s*(\d+[a-z]?)",
     re.IGNORECASE,
 )
 _CIRC_DATE_RE = re.compile(
-    r"circulaire\s+n[o°]?\s*(\d+)\s+du\s+(.+?)(?:\n|—|-|–)",
+    r"circulaire\s+n[o°]?\.?\s*(\d+[a-z]?)\s+du\s+(.+?)(?:\n|—|-|–)",
+    re.IGNORECASE,
+)
+# Numéro depuis le nom de fichier : "AFC_CIRC_155.pdf", "AFC-CIRC-199a.pdf".
+# Source la plus fiable : beaucoup de "Lettre circulaire" n'ont aucun numéro
+# dans leur en-tête, mais le fichier est toujours nommé AFC_CIRC_<num>.
+_CIRC_FILENAME_RE = re.compile(
+    r"AFC[_\- ]?CIRC[_\- ]?(\d+[a-z]?)",
     re.IGNORECASE,
 )
 
 
-def _detect_afc_circular(text: str) -> tuple[str, str] | None:
-    """Retourne (ref, name) si le PDF est une circulaire AFC, sinon None."""
+def _detect_afc_circular(text: str, filename: str = "") -> tuple[str, str] | None:
+    """Retourne (ref, name) si le PDF est une circulaire AFC, sinon None.
+
+    Le numéro est lu en priorité depuis le nom de fichier (AFC_CIRC_<num>),
+    puis depuis l'en-tête. Le repli "AFC-Circ-?" ne sert plus que pour un
+    PDF de circulaire ni nommé ni numéroté dans son en-tête.
+    """
+    # 1. Numéro depuis le nom de fichier (le plus fiable)
+    if filename:
+        mf = _CIRC_FILENAME_RE.search(filename)
+        if mf:
+            num = mf.group(1).lower()
+            return f"AFC-Circ-{num}", f"Circulaire AFC n° {num}"
+
     header = text[:2000]
+    # 2. "Circulaire n° X du <date>"
     m_full = _CIRC_DATE_RE.search(header)
     if m_full:
-        num = m_full.group(1)
+        num = m_full.group(1).lower()
         return f"AFC-Circ-{num}", f"Circulaire AFC n° {num}"
+    # 3. "Circulaire n° X" / "Circulaire no. X"
     m = _CIRC_RE.search(header)
     if m:
-        num = m.group(1)
+        num = m.group(1).lower()
         return f"AFC-Circ-{num}", f"Circulaire AFC n° {num}"
-    # Détection par mots-clés AFC
+    # 4. Repli : PDF AFC clairement circulaire mais numéro illisible
     lower = header.lower()
     if "administration fédérale des contributions" in lower or "afc" in lower:
         if "circulaire" in lower or "kreisschreiben" in lower or "circolare" in lower:
@@ -216,7 +239,7 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
     lines = full_text.splitlines()
 
     # 1. Circulaire AFC ?
-    circ = _detect_afc_circular(full_text)
+    circ = _detect_afc_circular(full_text, pdf_path.name)
     if circ:
         law_ref, law_name = circ
         url = "https://www.estv.admin.ch/estv/fr/home/direkt-bundessteuer/fachinformationen/kreisschreiben.html"
