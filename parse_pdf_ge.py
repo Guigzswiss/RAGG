@@ -291,6 +291,18 @@ def parse_pdf(pdf_path: Path) -> List[ArticleChunk]:
             chunks = _chunk_raw_text(full_text, law_ref, law_name, url)
         return chunks
 
+    # 1b. Document AFC non-circulaire (notices, lettres, etc.)
+    #     Le préfixe AFC_ du nom de fichier prime sur _detect_law, qui
+    #     pourrait confondre la notice avec une loi cantonale.
+    if re.match(r"^AFC_", pdf_path.name, re.IGNORECASE):
+        law_ref = pdf_path.stem.replace("_", "-")
+        law_name = f"Notice AFC ({pdf_path.stem})"
+        url = "https://www.estv.admin.ch"
+        chunks = _parse_by_articles(lines, law_ref, law_name, url)
+        if not chunks:
+            chunks = _chunk_raw_text(full_text, law_ref, law_name, url)
+        return chunks
+
     # 2. Loi cantonale
     law_ref, law_name = _detect_law(full_text, pdf_path.name)
     if law_ref.startswith("D ") or law_ref.startswith("RSV"):
