@@ -201,8 +201,17 @@ def _parse_circular(lines: list[str], law_ref: str, law_name: str,
         m = _CIRC_SECTION_RE.match(stripped)
         if m:
             num = m.group(1).rstrip(".")
+            # Rejeter les faux positifs : codes postaux (3003 Berne),
+            # numéros de page, codes internes AFC (090, 112a).
+            # Un vrai numéro de section de niveau 1 ne dépasse pas 99.
+            top_level = num.split(".")[0] if "." in num else num
+            if top_level.isdigit() and (int(top_level) > 99
+                                        or (len(top_level) > 1
+                                            and top_level[0] == "0")):
+                if current_id is not None:
+                    current_lines.append(stripped)
+                continue
             depth = num.count(".") + 1 if "." in num else 1
-            # On ne crée des chunks qu'aux 2 premiers niveaux pour éviter la fragmentation
             if depth <= 2:
                 flush()
                 current_id = f"§ {num}"
