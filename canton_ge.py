@@ -53,6 +53,37 @@ def _candidate_urls(ref: str) -> list[str]:
     ]
 
 
+def _decode_html(raw: bytes, content_type: str = "") -> str:
+    """Décode du HTML en détectant l'encodage.
+
+    SILGENEVE sert du HTML ancien en Windows-1252 / ISO-8859-1 (pas UTF-8).
+    Décoder en UTF-8 casserait tous les accents (é → �). On lit donc le
+    charset depuis l'en-tête HTTP, puis depuis la balise <meta>, sinon on
+    se rabat sur cp1252 (superset de latin-1, sans perte sur ces pages).
+    """
+    import re as _re
+    # 1. charset depuis l'en-tête HTTP
+    m = _re.search(r"charset=([\w-]+)", content_type or "", _re.IGNORECASE)
+    if m:
+        try:
+            return raw.decode(m.group(1), errors="replace")
+        except LookupError:
+            pass
+    # 2. charset depuis une balise <meta ... charset=...>
+    head = raw[:2048].decode("ascii", errors="ignore")
+    m = _re.search(r'charset=["\']?([\w-]+)', head, _re.IGNORECASE)
+    if m:
+        try:
+            return raw.decode(m.group(1), errors="replace")
+        except LookupError:
+            pass
+    # 3. UTF-8 strict ; si échec, cp1252 (cas SILGENEVE)
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("cp1252", errors="replace")
+
+
 def _fetch_html(url: str) -> str:
     import urllib.request
     req = urllib.request.Request(url, headers={
@@ -61,7 +92,9 @@ def _fetch_html(url: str) -> str:
         "Accept-Language": "fr-CH,fr;q=0.9",
     })
     with urllib.request.urlopen(req, timeout=30) as r:
-        return r.read().decode("utf-8", errors="replace")
+        raw = r.read()
+        ctype = r.headers.get("Content-Type", "")
+    return _decode_html(raw, ctype)
 
 
 def _fetch_first_ok(ref: str) -> tuple[str, str]:
