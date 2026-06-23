@@ -249,6 +249,81 @@ def cmd_cleanup_circ():
     print("  Ré-indexe avec : python run.py index-pdf <dossier_des_circulaires>")
 
 
+def cmd_reindex_ge():
+    """Re-indexe proprement TOUTES les lois cantonales genevoises (catégorie D).
+
+    1. Supprime tous les chunks dont law_sr commence par 'D ' (issus des PDF
+       SILGENEVE : multi-lois mal classées + versions périmées).
+    2. Ré-indexe chaque loi depuis ge.ch/legi (version actuelle, bonne réf).
+
+    Les lois fédérales, vaudoises, circulaires AFC et LRCV ne sont PAS touchées.
+    """
+    from config import (INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED,
+                        CHROMA_DIR, COLLECTION_NAME)
+    from embedder import InfomaniakEmbedder
+    from canton_ge import fetch_law_from_ge, LOIS_GE
+    import chromadb
+
+    client = chromadb.PersistentClient(path=CHROMA_DIR)
+    try:
+        col = client.get_collection(COLLECTION_NAME)
+    except Exception:
+        print("Collection introuvable.")
+        return
+
+    before = col.count()
+    print(f"Collection : {before} chunks au total.\n")
+
+    # 1. Recenser les chunks Genève (law_sr commençant par 'D ')
+    res = col.get(include=["metadatas"])
+    ids = res.get("ids") or []
+    metas = res.get("metadatas") or []
+    ge_ids = []
+    by_law: dict[str, int] = {}
+    for i, _id in enumerate(ids):
+        sr = str((metas[i] or {}).get("law_sr", ""))
+        if sr.startswith("D "):
+            ge_ids.append(_id)
+            by_law[sr] = by_law.get(sr, 0) + 1
+
+    print("Chunks Genève actuels (à supprimer) :")
+    for sr, n in sorted(by_law.items()):
+        print(f"  {sr:10s} : {n}")
+    print(f"  TOTAL    : {len(ge_ids)}\n")
+
+    # 2. Supprimer par lots
+    if ge_ids:
+        BATCH = 500
+        for s in range(0, len(ge_ids), BATCH):
+            col.delete(ids=ge_ids[s : s + BATCH])
+        print(f"Supprimé : {len(ge_ids)} chunks. Collection : {col.count()} chunks.\n")
+
+    # 3. Ré-indexer chaque loi depuis ge.ch/legi
+    embedder = InfomaniakEmbedder(INFOMANIAK_BASE_URL, INFOMANIAK_TOKEN, MODEL_EMBED)
+    from index import HybridIndex
+    idx = HybridIndex(embedder, CHROMA_DIR, COLLECTION_NAME)
+
+    total_added = 0
+    for ref, name in LOIS_GE.items():
+        print(f"\n=== {ref} ({name}) ===")
+        try:
+            chunks = fetch_law_from_ge(ref, name)
+            if not chunks:
+                print(f"  ATTENTION : 0 article pour {ref}, ignoré.")
+                continue
+            idx.add_chunks(chunks)
+            total_added += len(chunks)
+            print(f"  {len(chunks)} articles indexés.")
+        except Exception as e:
+            print(f"  ERREUR pour {ref} : {e}")
+
+    after = idx.count()
+    print(f"\n{'=' * 50}")
+    print(f"Re-index terminé.")
+    print(f"  Avant : {before} chunks")
+    print(f"  Après : {after} chunks  (+{total_added} articles GE propres)")
+
+
 def cmd_ask(question: str):
     """Pose une question au moteur RAG."""
     from config import INFOMANIAK_TOKEN, INFOMANIAK_BASE_URL, MODEL_EMBED, MODEL_CHAT, TOP_K_FINAL
@@ -311,6 +386,8 @@ def main():
         cmd_cleanup(law_sr)
     elif cmd == "cleanup-circ":
         cmd_cleanup_circ()
+    elif cmd == "reindex-ge":
+        cmd_reindex_ge()
     elif cmd == "ask":
         if len(sys.argv) < 3:
             print('Usage : python run.py ask "<question>"')
