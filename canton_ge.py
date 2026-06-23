@@ -8,31 +8,75 @@ from __future__ import annotations
 from typing import List
 from parse_chunk import ArticleChunk
 
-UA = "gsass-rag/1.0 (fiduciaire genevoise; contact: guillaume.droz06@gmail.com)"
+# User-Agent de navigateur : ge.ch renvoie 403 sur les UA non-navigateur.
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 
-# Lois cantonales genevoises utiles pour une fiduciaire
+# Lois cantonales genevoises fiscales (convention alignée sur parse_pdf_ge._LAW_HINTS)
 LOIS_GE = {
-    "D 3 08":  "LIPP",    # Loi sur l'imposition des personnes physiques
-    "D 3 15":  "LIPM",    # Loi sur l'imposition des personnes morales
-    "D 3 17":  "LPFisc",  # Loi de procédure fiscale
-    "D 3 30":  "LMSD",    # Droits de mutation et successions
-    "D 3 05":  "LT",      # Loi sur la taxation (acomptes)
-    "E 1 05":  "LRDBHC",  # Loi sur la restauration, débit de boissons (exemple)
+    "D 3 05":  "LCP",     # Loi générale sur les contributions publiques
+    "D 3 07":  "LCACant", # Centimes additionnels cantonaux
+    "D 3 08":  "LIPP",    # Imposition des personnes physiques
+    "D 3 10":  "LEFI",    # Exonérations fiscales
+    "D 3 15":  "LIPM",    # Imposition des personnes morales
+    "D 3 17":  "LPFisc",  # Procédure fiscale
+    "D 3 18":  "LPGIP",   # Perception et garanties des impôts des personnes physiques
+    "D 3 20":  "LISP",    # Impôt à la source
+    "D 3 25":  "LDS",     # Droits de succession
+    "D 3 30":  "LDE",     # Droits d'enregistrement
 }
 
 
 def _ge_url(ref: str) -> str:
-    """Construit l'URL de la page ge.ch/legi pour une référence donnée."""
-    # Format: https://www.ge.ch/document/D-3-08/consulter  (tirets, pas espaces)
+    """URL canonique d'affichage (stockée comme source dans les chunks)."""
     slug = ref.replace(" ", "-")
-    return f"https://www.ge.ch/document/{slug}/consulter"
+    return f"https://www.ge.ch/legislation/rsg/f/s/rsg_{slug.lower().replace('-', '')}.html"
+
+
+def _candidate_urls(ref: str) -> list[str]:
+    """Plusieurs formats d'URL ge.ch/SILGENEVE à essayer dans l'ordre.
+
+    Ex. "D 3 08" → rsg_d3_08. Le site renvoie 403/404 selon les formats,
+    on essaie donc successivement jusqu'à obtenir une page substantielle.
+    """
+    parts = ref.split()           # ["D", "3", "08"]
+    letter = parts[0].lower()     # "d"
+    rest = "".join(parts[1:])     # "308"
+    tail = "_".join(parts[1:])    # "3_08"
+    code = f"{letter}{parts[1]}_{parts[2]}" if len(parts) >= 3 else f"{letter}{rest}"
+    slug = ref.replace(" ", "-")
+    return [
+        f"https://www.ge.ch/legislation/rsg/f/s/rsg_{code}.html",
+        f"https://www.ge.ch/legislation/rsg/f/rsg_{code}.html",
+        f"https://silgeneve.ch/legis/program/books/rsg/htm/rsg_{code}.htm",
+        f"https://www.ge.ch/document/{slug}/consulter",
+    ]
 
 
 def _fetch_html(url: str) -> str:
     import urllib.request
-    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html"})
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml",
+        "Accept-Language": "fr-CH,fr;q=0.9",
+    })
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.read().decode("utf-8", errors="replace")
+
+
+def _fetch_first_ok(ref: str) -> tuple[str, str]:
+    """Essaie chaque URL candidate, retourne (html, url) du premier succès."""
+    import urllib.error
+    last_err = None
+    for u in _candidate_urls(ref):
+        try:
+            html = _fetch_html(u)
+            if len(html) > 2000:   # page substantielle
+                return html, u
+        except (urllib.error.HTTPError, urllib.error.URLError, OSError) as e:
+            last_err = e
+            continue
+    raise RuntimeError(f"Aucune URL ge.ch accessible pour {ref} (dernier: {last_err})")
 
 
 def _parse_ge_html(html: str, law_ref: str, law_name: str, url: str) -> List[ArticleChunk]:
@@ -159,12 +203,10 @@ def fetch_law_from_ge(ref: str, name: str | None = None) -> List[ArticleChunk]:
         name  Nom court optionnel, ex. "LIPP"
     """
     law_name = name or LOIS_GE.get(ref, ref)
-    url = _ge_url(ref)
 
     print(f"  Loi GE     : {law_name} ({ref})")
+    html, url = _fetch_first_ok(ref)
     print(f"  URL        : {url}")
-
-    html = _fetch_html(url)
     print(f"  HTML       : {len(html)} caractères téléchargés")
 
     chunks = _parse_ge_html(html, law_ref=ref, law_name=law_name, url=url)
