@@ -129,7 +129,7 @@ def _parse_ge_html(html: str, law_ref: str, law_name: str, url: str) -> List[Art
             self._capture = False
             self._depth = 0
             self._art_pattern = re.compile(
-                r"^art(?:icle)?\.?\s*(\d+\s*[a-z]?(?:\s*bis|ter|quater)?)",
+                r"^art(?:icle)?\.?\s*(\d+(?:bis|ter|quater|[a-z])?)\b",
                 re.IGNORECASE,
             )
 
@@ -204,7 +204,7 @@ def _parse_ge_html_fallback(html: str, law_ref: str, law_name: str, url: str) ->
     raw = " ".join(ex.parts)
 
     # Découper sur Art. N / Article N
-    pattern = re.compile(r"\b(Art(?:icle)?\.?\s+\d+\s*[a-z]?(?:\s*bis|ter|quater)?)\b", re.IGNORECASE)
+    pattern = re.compile(r"\b(Art(?:icle)?\.?\s+\d+(?:bis|ter|quater|[a-z])?)\b", re.IGNORECASE)
     parts = pattern.split(raw)
 
     chunks = []
