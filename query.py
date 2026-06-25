@@ -20,8 +20,12 @@ INSTRUCTIONS SPÉCIFIQUES :
 - Si la question porte sur une personne physique, distingue revenu et fortune, fédéral et cantonal.
 - Cite toujours les alinéas précis (al. 1, al. 2, etc.) quand ils sont pertinents.
 - Si plusieurs extraits se complètent, synthétise-les en indiquant chaque source.
+- Chaque affirmation DOIT être suivie de sa citation entre parenthèses.
 
-FORMAT DE CITATION : (LIFD, art. X al. Y) ou (LIPM GE, art. X) ou (RS 642.11, art. X)"""
+FORMAT DE CITATION : (LIFD, art. X al. Y) ou (LIPM GE, art. X) ou (RS 642.11, art. X)
+
+EXEMPLE DE RÉPONSE BIEN CITÉE :
+Les personnes physiques ayant leur domicile ou leur séjour en Suisse sont assujetties à l'impôt fédéral direct (LIFD, art. 1). Sont imposables tous les revenus du contribuable, qu'ils soient uniques ou récurrents (LIFD, art. 16 al. 1)."""
 
 
 def build_context(results: List[Dict[str, Any]]) -> str:
@@ -92,11 +96,26 @@ class RAGEngine:
         ])
 
         if is_company and is_rate:
-            # Taux fédéral de l'impôt sur le bénéfice (LIFD art. 68 = 8,5%)
             pins.append(("642.11", "art. 68"))
-            # Taux cantonal genevois (LIPM art. 20 = 3,33%)
             if any(w in q for w in ["genève", "genevois", "ge ", "cantonal"]):
                 pins.append(("D 3 15", "art. 20"))
+
+        is_person = any(w in q for w in [
+            "personne physique", "revenu", "contribuable", "domicile",
+            "assujetti", "séjour",
+        ])
+
+        if is_person or any(w in q for w in ["assujetti", "qui est soumis"]):
+            pins.append(("642.11", "art. 1"))
+
+        if any(w in q for w in ["déduction", "déduire", "intérêts passifs", "pension"]):
+            pins.append(("642.11", "art. 33"))
+
+        if is_company and not is_rate:
+            pins.append(("642.11", "art. 49"))
+
+        if any(w in q for w in ["bénéfice net", "objet de l'impôt sur le bénéfice"]):
+            pins.append(("642.11", "art. 57"))
 
         return pins
 

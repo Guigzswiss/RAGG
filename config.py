@@ -26,7 +26,7 @@ COLLECTION_NAME: str = "swiss_law"
 # ── Retrieval ─────────────────────────────────────────────────────────────────
 TOP_K_DENSE: int = 15
 TOP_K_BM25: int = 15
-TOP_K_FINAL: int = 8
+TOP_K_FINAL: int = 12
 RRF_K: int = 60
 
 # ── Fedlex ────────────────────────────────────────────────────────────────────
