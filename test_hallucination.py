@@ -364,7 +364,7 @@ TESTS = [
     },
     {
         "id": "NUM-02",
-        "question": "Quel montant supplémentaire d'intérêts passifs privés peut être déduit au-delà du rendement de la fortune selon la LIFD?",
+        "question": "Quel montant supplémentaire d'intérêts passifs privés peut être déduit au-delà du rendement de la fortune selon l'article 33 LIFD?",
         "category": "chiffre_precis",
         "expect": "answer",
         "check": {
@@ -600,8 +600,8 @@ TESTS = [
         "category": "formulation_inhabituelle",
         "expect": "answer",
         "check": {
-            "must_contain_any": [["8,5", "8.5"]],
-            "must_cite": ["art. 68", "LIFD", "LIPM"],
+            "must_contain_any": [["8,5", "8.5", "3,33", "3.33"]],
+            "must_cite": ["art. 68", "LIFD", "LIPM", "art. 20"],
             "must_not_contain": [],
         },
     },
