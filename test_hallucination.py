@@ -369,7 +369,7 @@ TESTS = [
         "expect": "answer",
         "check": {
             "must_contain_any": [["50 000", "50'000", "50000", "50 000"]],
-            "must_cite": ["art. 33"],
+            "must_cite": ["art. 33", "article 33"],
             "must_not_contain": ["100 000", "25 000", "75 000", "30 000"],
         },
     },
