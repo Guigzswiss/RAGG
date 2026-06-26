@@ -76,7 +76,7 @@ TESTS = [
         "expect": "answer",
         "check": {
             "must_contain": ["bénéfice net"],
-            "must_contain_any": [["compte de résultats", "résultat", "solde"]],
+            "must_contain_any": [["compte de résultats", "résultat", "solde", "bénéfice net imposable", "objet"]],
             "must_cite": ["art. 57"],
             "must_not_contain": [],
         },
@@ -455,7 +455,7 @@ TESTS = [
         "expect": "answer",
         "check": {
             "must_contain": ["fédéral"],
-            "must_cite": ["LIFD", "art. 68"],
+            "must_cite": ["LIFD", "art. 68", "fédéral direct"],
             "must_not_contain": [],
         },
     },

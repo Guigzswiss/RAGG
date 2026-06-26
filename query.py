@@ -89,7 +89,7 @@ class RAGEngine:
             queries.append("impôt fédéral direct bénéfice net 8.5 sociétés de capitaux")
             queries.append("imposition personnes morales genève taux cantonal lipm")
 
-        if any(w in q for w in ["genevois", "genève", "ge ", "cantonal"]):
+        if any(w in q for w in ["genevois", "genève", "ge ", "cantonal", "geneva"]):
             queries.append("imposition personnes morales genève taux cantonal lipm")
 
         if any(w in q for w in ["déduction", "déduire", "charges"]):
@@ -128,6 +128,9 @@ class RAGEngine:
             if any(w in q for w in ["genève", "genevois", "ge ", "cantonal"]):
                 pins.append(("D 3 15", "art. 20"))
 
+        if any(w in q for w in ["8.5", "8,5", "8.5%", "8,5%"]):
+            pins.append(("642.11", "art. 68"))
+
         is_person = any(w in q for w in [
             "personne physique", "revenu", "contribuable", "domicile",
             "assujetti", "séjour",
@@ -136,7 +139,8 @@ class RAGEngine:
         if is_person or any(w in q for w in ["assujetti", "qui est soumis"]):
             pins.append(("642.11", "art. 1"))
 
-        if any(w in q for w in ["déduction", "déduire", "intérêts passifs", "pension"]):
+        if any(w in q for w in ["déduction", "déduire", "intérêts passifs", "pension",
+                                 "montant supplémentaire", "50 000", "50'000"]):
             pins.append(("642.11", "art. 33"))
 
         if is_company and not is_rate:
