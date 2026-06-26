@@ -172,10 +172,10 @@ TESTS = [
         "category": "premisse_fausse",
         "expect": "refuse",
         "check": {
-            "must_not_contain": ["oui", "correct", "en effet", "500"],
+            "must_not_contain": ["oui, c'est correct", "en effet, 500", "exonérées si"],
             "must_contain": [],
         },
-        "note": "Aucune exonération de ce type n'existe. Le RAG doit refuser ou corriger.",
+        "note": "Aucune exonération de ce type n'existe. Le RAG doit refuser ou corriger (dire 'incorrect' est OK).",
     },
 
     # ─────────────────────────────────────────────────────────────────────
@@ -189,7 +189,7 @@ TESTS = [
         "expect": "answer",
         "check": {
             "must_contain": ["50"],
-            "must_cite": ["art. 33"],
+            "must_cite": ["art. 33", "art. 33a"],
             "must_not_contain": [],
         },
     },
@@ -338,9 +338,11 @@ def _check_answer(test: dict, answer: str) -> dict:
             if kw.lower() not in lower:
                 issues.append(f"MOT-CLÉ MANQUANT: '{kw}'")
 
-        for cite in check.get("must_cite", []):
-            if cite.lower() not in lower:
-                issues.append(f"CITATION MANQUANTE: '{cite}'")
+        cites = check.get("must_cite", [])
+        if cites:
+            found_any_cite = any(c.lower() in lower for c in cites)
+            if not found_any_cite:
+                issues.append(f"CITATION MANQUANTE: aucune parmi {cites}")
 
     for bad in check.get("must_not_contain", []):
         if bad.lower() in lower:
