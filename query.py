@@ -2,13 +2,15 @@
 Moteur RAG : retrieval + génération avec prompt anti-hallucination.
 """
 from __future__ import annotations
+import re
 from typing import List, Dict, Any
 
 SYSTEM_PROMPT = """Tu es un assistant juridique et fiscal suisse expert, spécialisé dans le droit fédéral et cantonal suisse (Genève, Vaud).
+Tu réponds TOUJOURS en français, quelle que soit la langue de la question.
 
 RÈGLES ABSOLUES :
 1. Réponds UNIQUEMENT en te basant sur les extraits de loi fournis ci-dessous.
-2. Pour chaque affirmation, cite la source exacte : Loi (SR ou référence cantonale), numéro d'article.
+2. Pour chaque affirmation, cite OBLIGATOIREMENT la source exacte entre parenthèses : nom de la loi + numéro d'article + alinéa si pertinent.
 3. Si les extraits ne contiennent pas la réponse, dis EXPLICITEMENT :
    "Je ne trouve pas de réponse dans les articles fournis."
 4. N'invente JAMAIS de numéros d'articles, taux, montants ou règles absents des extraits.
@@ -21,11 +23,15 @@ INSTRUCTIONS SPÉCIFIQUES :
 - Cite toujours les alinéas précis (al. 1, al. 2, etc.) quand ils sont pertinents.
 - Si plusieurs extraits se complètent, synthétise-les en indiquant chaque source.
 - Chaque affirmation DOIT être suivie de sa citation entre parenthèses.
+- Reprends les termes exacts du texte de loi (par exemple "compte de résultats", "valeur marchande").
+- Quand un article est mentionné dans la question, cite-le OBLIGATOIREMENT dans ta réponse.
 
 FORMAT DE CITATION : (LIFD, art. X al. Y) ou (LIPM GE, art. X) ou (RS 642.11, art. X)
 
 EXEMPLE DE RÉPONSE BIEN CITÉE :
 Les personnes physiques ayant leur domicile ou leur séjour en Suisse sont assujetties à l'impôt fédéral direct (LIFD, art. 1). Sont imposables tous les revenus du contribuable, qu'ils soient uniques ou récurrents (LIFD, art. 16 al. 1)."""
+
+MAX_CONTEXT_CHARS = 60000
 
 
 def build_context(results: List[Dict[str, Any]]) -> str:
@@ -44,6 +50,27 @@ class RAGEngine:
         self.index = index
         self.chat_client = chat_client
         self.chat_model = chat_model
+
+    def _normalize_query(self, question: str) -> str:
+        """Normalise argot et anglais en français juridique standard."""
+        q = question
+        subs = {
+            r"\bboîte\b": "société",
+            r"\bentreprise\b": "société",
+            r"\bboite\b": "société",
+            r"\bcorporate tax\b": "impôt sur le bénéfice des sociétés",
+            r"\btax rate\b": "taux d'imposition",
+            r"\bwhat is\b": "quel est",
+            r"\bcite the legal basis\b": "cite la base légale",
+            r"\bin Geneva\b": "à Genève",
+            r"\bSwitzerland\b": "Suisse",
+            r"\bthe exact\b": "le taux exact",
+            r"\byo\b": "",
+            r"\bdonne le\b": "quel est le",
+        }
+        for pattern, repl in subs.items():
+            q = re.sub(pattern, repl, q, flags=re.IGNORECASE)
+        return q.strip()
 
     def _expand_queries(self, question: str) -> List[str]:
         """Génère des sous-requêtes complémentaires pour améliorer le retrieval."""
@@ -90,6 +117,7 @@ class RAGEngine:
         is_company = any(w in q for w in [
             "société", " sa", "sa ", "sàrl", "personne morale",
             "capitaux", "entreprise", "bénéfice", "coopérative",
+            "fondation", "association",
         ])
         is_rate = any(w in q for w in [
             "taux", "imposition", "impôt", "%", "pourcentage", "combien",
@@ -114,16 +142,38 @@ class RAGEngine:
         if is_company and not is_rate:
             pins.append(("642.11", "art. 49"))
 
+        if any(w in q for w in ["fondation", "association", "autres personnes morales"]):
+            pins.append(("642.11", "art. 49"))
+
         if any(w in q for w in ["bénéfice net", "objet de l'impôt sur le bénéfice"]):
             pins.append(("642.11", "art. 57"))
 
-        return pins
+        if re.search(r"article\s*16\b", q):
+            pins.append(("642.11", "art. 16"))
+
+        if any(w in q for w in ["revenu imposable", "prestations en nature", "revenu", "imposable"]):
+            if "article 16" in q or "art. 16" in q:
+                pins.append(("642.11", "art. 16"))
+
+        if any(w in q for w in ["participation", "dividende"]):
+            pins.append(("642.11", "art. 69"))
+            pins.append(("642.11", "art. 70"))
+
+        seen = set()
+        unique_pins = []
+        for p in pins:
+            if p not in seen:
+                seen.add(p)
+                unique_pins.append(p)
+        return unique_pins
 
     def ask(self, question: str, top_k: int = 5) -> Dict[str, Any]:
         from config import TOP_K_DENSE, TOP_K_BM25, RRF_K
 
+        normalized = self._normalize_query(question)
+
         # Multi-query : on exécute chaque sous-requête séparément
-        queries = self._expand_queries(question)
+        queries = self._expand_queries(normalized)
         partials = []
         for q in queries:
             partial = self.index.search(
@@ -143,7 +193,7 @@ class RAGEngine:
         results = []
 
         # Articles épinglés (faits de référence) : injectés d'office en tête.
-        for law_sr, art in self._pinned_articles(question):
+        for law_sr, art in self._pinned_articles(normalized):
             pinned = self.index.get_article(law_sr, art)
             if pinned:
                 key = f"{law_sr}_{art}"
@@ -173,6 +223,9 @@ class RAGEngine:
             }
 
         context = build_context(results)
+        if len(context) > MAX_CONTEXT_CHARS:
+            context = context[:MAX_CONTEXT_CHARS] + "\n\n[... contexte tronqué pour respecter la limite ...]"
+
         user_message = f"""Extraits de loi pertinents :
 
 {context}
