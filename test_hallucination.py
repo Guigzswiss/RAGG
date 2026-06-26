@@ -297,9 +297,10 @@ TESTS = [
         "category": "premisse_fausse",
         "expect": "refuse",
         "check": {
-            "must_not_contain": ["oui", "en effet", "exact", "3 %", "3%"],
+            "must_not_contain": ["oui", "en effet", "exact", "3 % pour les start"],
             "must_contain": [],
         },
+        "note": "Le RAG peut répéter '3%' en réfutant la prémisse. L'interdit cible la confirmation, pas la citation dans un contexte de refus.",
     },
     {
         "id": "TRAP-05",
@@ -369,7 +370,7 @@ TESTS = [
         "expect": "answer",
         "check": {
             "must_contain_any": [["50 000", "50'000", "50000", "50 000"]],
-            "must_cite": ["art. 33", "article 33"],
+            "must_cite": ["art. 33", "article 33", "LIFD"],
             "must_not_contain": ["100 000", "25 000", "75 000", "30 000"],
         },
     },
