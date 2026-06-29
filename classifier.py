@@ -1,13 +1,13 @@
 """
-Classifie des PDF via LLM Qwen3 (Infomaniak).
-Extrait le texte du PDF, envoie au LLM, retourne le type de document.
+Classifie des PDF selon les codes fiscaux genevois et les trie
+dans l'ordre de la declaration d'impot.
 
 Usage :
   python classifier.py "facture.pdf" "contrat.pdf"
   python classifier.py --dossier C:\pipeline_impression\processing
 
-Sortie : JSON avec le type de chaque document.
-Nécessite : pip install pdfplumber requests --break-system-packages
+Sortie : JSON avec le code fiscal et la priorite de chaque document.
+Necessite : pip install pdfplumber requests --break-system-packages
 """
 
 import json
@@ -24,17 +24,33 @@ API_URL = "https://api.infomaniak.com/1/ai/108639/openai/chat/completions"
 MODEL = "qwen3"
 API_KEY = os.environ.get("INFOMANIAK_API_KEY", "")
 
-TYPES_VALIDES = ["FACTURE", "BON_DE_COMMANDE", "CONTRAT", "AUTRE"]
+SCRIPT_DIR = Path(__file__).parent.resolve()
+ORDRE_TRI_PATH = SCRIPT_DIR / "ordre_tri.json"
 
-PROMPT = """Classifie ce document dans UNE seule categorie parmi : FACTURE, BON_DE_COMMANDE, CONTRAT, AUTRE.
-Reponds uniquement le mot de la categorie, rien d autre. /no_think
+with open(ORDRE_TRI_PATH, encoding="utf-8") as f:
+    ORDRE_TRI = json.load(f)
+
+CODES_VALIDES = [item["code"] for item in ORDRE_TRI]
+CODE_TO_PRIORITE = {item["code"]: item["priorite"] for item in ORDRE_TRI}
+CODE_TO_DESC = {item["code"]: item["description"] for item in ORDRE_TRI}
+
+CODES_LISTE = "\n".join(
+    f"- {item['code']} : {item['description']}" for item in ORDRE_TRI
+)
+
+PROMPT = f"""Tu es un assistant de fiduciaire a Geneve. Analyse le contenu de ce document et identifie a quel code fiscal de la declaration d'impot genevoise il correspond.
+
+Voici les codes possibles :
+{CODES_LISTE}
+
+Reponds UNIQUEMENT avec le code (par exemple : 11.10 ou 52.11 ou COMPTES_BANCAIRES). Rien d'autre. /no_think
 
 Contenu du document :
 """
 
 
 def extraire_texte(chemin_pdf):
-    """Extrait le texte des 3 premières pages d'un PDF."""
+    """Extrait le texte des 3 premieres pages d'un PDF."""
     texte = ""
     with pdfplumber.open(str(chemin_pdf)) as pdf:
         for page in pdf.pages[:3]:
@@ -48,8 +64,8 @@ def appel_llm(texte):
     """Appelle le LLM avec retry (3 tentatives, 3s entre chaque)."""
     payload = {
         "model": MODEL,
-        "messages": [{"role": "user", "content": PROMPT + texte[:2000]}],
-        "max_tokens": 20,
+        "messages": [{"role": "user", "content": PROMPT + texte[:3000]}],
+        "max_tokens": 30,
         "temperature": 0.0,
     }
     headers = {
@@ -70,12 +86,12 @@ def appel_llm(texte):
                 .get("message", {})
                 .get("content", "")
                 .strip()
-                .upper()
             )
-            for t in TYPES_VALIDES:
-                if t in reponse:
-                    return t
-            print(f"type inattendu '{reponse}' -> AUTRE")
+            # Chercher un code valide dans la reponse
+            for code in CODES_VALIDES:
+                if code in reponse:
+                    return code
+            print(f"code inconnu '{reponse}'")
             return "AUTRE"
         except Exception as e:
             print(f"tentative {tentative + 1}/3 echouee ({e})")
@@ -87,7 +103,7 @@ def appel_llm(texte):
 def classifier(chemin_pdf):
     """Classifie un PDF : extraction texte + appel LLM."""
     if not API_KEY:
-        print("[ERREUR] Variable INFOMANIAK_API_KEY non définie.")
+        print("[ERREUR] Variable INFOMANIAK_API_KEY non definie.")
         return None
 
     f = Path(chemin_pdf)
@@ -108,10 +124,13 @@ def classifier(chemin_pdf):
 
     print(f"OK ({len(texte)} cars)")
     print(f"[LLM] Classification via {MODEL}...", end=" ")
-    resultat = appel_llm(texte)
-    if resultat:
-        print(f"-> {resultat}")
-    return resultat
+    code = appel_llm(texte)
+    if code and code != "AUTRE":
+        desc = CODE_TO_DESC.get(code, "")
+        print(f"-> {code} ({desc})")
+    elif code == "AUTRE":
+        print("-> AUTRE (non reconnu)")
+    return code
 
 
 def main():
@@ -140,17 +159,23 @@ def main():
     resultats = []
 
     for f in fichiers:
-        type_doc = classifier(f)
+        code = classifier(f)
+        priorite = CODE_TO_PRIORITE.get(code, 999) if code else 999
         resultats.append({
             "fichier": str(f.resolve()),
             "nom": f.name,
-            "type": type_doc if type_doc else "ERREUR",
+            "code": code if code else "AUTRE",
+            "description": CODE_TO_DESC.get(code, "Non classe"),
+            "priorite": priorite,
         })
 
-    print(f"\n[RÉSULTAT JSON]")
+    # Trier par priorite
+    resultats.sort(key=lambda x: x["priorite"])
+
+    print(f"\n[RESULTAT JSON — trie par ordre de declaration]")
     print(json.dumps(resultats, indent=2, ensure_ascii=False))
 
-    if any(r["type"] == "ERREUR" for r in resultats):
+    if any(r["code"] == "AUTRE" or r["priorite"] == 999 for r in resultats):
         sys.exit(1)
     sys.exit(0)
 
