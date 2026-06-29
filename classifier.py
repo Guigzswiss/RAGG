@@ -1,126 +1,117 @@
 """
-Classifie des PDF via OCR Gemma 4 (Infomaniak).
-Convertit le PDF en image, envoie à l'API, retourne le type de document.
+Classifie des PDF via LLM Qwen3 (Infomaniak).
+Extrait le texte du PDF, envoie au LLM, retourne le type de document.
 
 Usage :
   python classifier.py "facture.pdf" "contrat.pdf"
   python classifier.py --dossier C:\pipeline_impression\processing
 
 Sortie : JSON avec le type de chaque document.
-Nécessite : pip install pdf2image requests --break-system-packages
-Nécessite aussi : poppler (pour pdf2image) — voir README.
+Nécessite : pip install pdfplumber requests --break-system-packages
 """
 
-import base64
 import json
 import os
 import sys
-from io import BytesIO
+import time
 from pathlib import Path
 
 import requests
-from pdf2image import convert_from_path
+import pdfplumber
 
 # --- Configuration ---
 API_URL = "https://api.infomaniak.com/1/ai/108639/openai/chat/completions"
-MODEL = "google/gemma-4-31B-it"
-
-# La clé API est lue depuis la variable d'environnement INFOMANIAK_API_KEY
-# Pour la définir : $env:INFOMANIAK_API_KEY = "ta_cle_ici" (PowerShell)
+MODEL = "qwen3"
 API_KEY = os.environ.get("INFOMANIAK_API_KEY", "")
 
 TYPES_VALIDES = ["FACTURE", "BON_DE_COMMANDE", "CONTRAT", "AUTRE"]
 
-PROMPT_CLASSIFICATION = """Analyse ce document et classifie-le dans exactement UNE de ces catégories :
-- FACTURE : facture, note de frais, relevé, décompte
-- BON_DE_COMMANDE : bon de commande, commande, order
-- CONTRAT : contrat, bail, convention, accord, mandat
-- AUTRE : tout document qui ne rentre pas dans les catégories ci-dessus
+PROMPT = """Classifie ce document dans UNE seule categorie parmi : FACTURE, BON_DE_COMMANDE, CONTRAT, AUTRE.
+Reponds uniquement le mot de la categorie, rien d autre. /no_think
 
-Réponds UNIQUEMENT avec le nom de la catégorie, rien d'autre. Par exemple : FACTURE"""
+Contenu du document :
+"""
 
 
-def pdf_vers_image_base64(chemin_pdf, dpi=200):
-    """Convertit la première page d'un PDF en image base64 (JPEG)."""
-    chemin = Path(chemin_pdf).resolve()
-    if not chemin.exists():
-        raise FileNotFoundError(f"PDF introuvable : {chemin}")
-
-    images = convert_from_path(str(chemin), dpi=dpi, first_page=1, last_page=1)
-    if not images:
-        raise ValueError(f"Impossible de convertir {chemin} en image")
-
-    buffer = BytesIO()
-    images[0].save(buffer, format="JPEG", quality=85)
-    b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    return b64
+def extraire_texte(chemin_pdf):
+    """Extrait le texte des 3 premières pages d'un PDF."""
+    texte = ""
+    with pdfplumber.open(str(chemin_pdf)) as pdf:
+        for page in pdf.pages[:3]:
+            t = page.extract_text()
+            if t:
+                texte += t + "\n"
+    return texte.strip()
 
 
-def classifier_document(chemin_pdf):
-    """Envoie l'image du PDF à Gemma 4 et retourne le type de document."""
+def appel_llm(texte):
+    """Appelle le LLM avec retry (3 tentatives, 3s entre chaque)."""
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": PROMPT + texte[:2000]}],
+        "max_tokens": 20,
+        "temperature": 0.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+
+    for tentative in range(3):
+        try:
+            r = requests.post(API_URL, json=payload, headers=headers, timeout=60)
+            if r.status_code != 200:
+                print(f"HTTP {r.status_code}")
+                print(f"[DEBUG] {r.text[:500]}")
+                return None
+            reponse = (
+                r.json()
+                .get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+                .strip()
+                .upper()
+            )
+            for t in TYPES_VALIDES:
+                if t in reponse:
+                    return t
+            print(f"type inattendu '{reponse}' -> AUTRE")
+            return "AUTRE"
+        except Exception as e:
+            print(f"tentative {tentative + 1}/3 echouee ({e})")
+            if tentative < 2:
+                time.sleep(3)
+    return None
+
+
+def classifier(chemin_pdf):
+    """Classifie un PDF : extraction texte + appel LLM."""
     if not API_KEY:
         print("[ERREUR] Variable INFOMANIAK_API_KEY non définie.")
-        print("         Définis-la avec : $env:INFOMANIAK_API_KEY = \"ta_cle\"")
         return None
 
-    print(f"[OCR] Conversion de {Path(chemin_pdf).name} en image...", end=" ")
+    f = Path(chemin_pdf)
+    if not f.exists():
+        print(f"[ERREUR] Fichier introuvable : {f}")
+        return None
+
+    print(f"[EXTRACT] {f.name} -> texte...", end=" ")
     try:
-        image_b64 = pdf_vers_image_base64(chemin_pdf)
+        texte = extraire_texte(f)
     except Exception as e:
         print(f"ECHEC ({e})")
         return None
-    print("OK")
 
-    print(f"[OCR] Envoi à Gemma 4 pour classification...", end=" ")
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_b64}"
-                        }
-                    },
-                    {
-                        "type": "text",
-                        "text": PROMPT_CLASSIFICATION
-                    }
-                ]
-            }
-        ],
-        "max_tokens": 20,
-        "temperature": 0
-    }
+    if not texte:
+        print("aucun texte extrait -> AUTRE")
+        return "AUTRE"
 
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    try:
-        resp = requests.post(API_URL, json=payload, headers=headers, timeout=60)
-        resp.raise_for_status()
-    except requests.exceptions.HTTPError as e:
-        print(f"ECHEC (HTTP {resp.status_code})")
-        print(f"         Réponse : {resp.text[:200]}")
-        return None
-    except requests.exceptions.RequestException as e:
-        print(f"ECHEC ({e})")
-        return None
-
-    data = resp.json()
-    reponse = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip().upper()
-    print(f"OK → {reponse}")
-
-    # Valider que la réponse est un type connu
-    if reponse not in TYPES_VALIDES:
-        print(f"[ATTENTION] Type inattendu '{reponse}', classé comme AUTRE")
-        reponse = "AUTRE"
-
-    return reponse
+    print(f"OK ({len(texte)} cars)")
+    print(f"[LLM] Classification via {MODEL}...", end=" ")
+    resultat = appel_llm(texte)
+    if resultat:
+        print(f"-> {resultat}")
+    return resultat
 
 
 def main():
@@ -131,7 +122,6 @@ def main():
         print("Variable requise : INFOMANIAK_API_KEY")
         sys.exit(1)
 
-    # Parser les arguments
     args = sys.argv[1:]
     fichiers = []
 
@@ -150,17 +140,16 @@ def main():
     resultats = []
 
     for f in fichiers:
-        type_doc = classifier_document(f)
+        type_doc = classifier(f)
         resultats.append({
             "fichier": str(f.resolve()),
             "nom": f.name,
-            "type": type_doc if type_doc else "ERREUR"
+            "type": type_doc if type_doc else "ERREUR",
         })
 
-    print("\n[RÉSULTAT JSON]")
+    print(f"\n[RÉSULTAT JSON]")
     print(json.dumps(resultats, indent=2, ensure_ascii=False))
 
-    # Code de sortie : 1 si au moins une erreur
     if any(r["type"] == "ERREUR" for r in resultats):
         sys.exit(1)
     sys.exit(0)
