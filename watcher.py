@@ -3,6 +3,9 @@ Surveille le dossier inbox, classifie et imprime les PDF automatiquement.
 Usage : python watcher.py [--dossier C:\\pipeline_impression]
 
 Flux : inbox -> processing -> classifier -> imprimer -> done
+Le watcher fonctionne en autonome (sans serveur Flask).
+Pour le flux email, utiliser serveur.py + n8n.
+
 Necessite : pip install watchdog pdfplumber requests --break-system-packages
 """
 

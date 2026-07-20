@@ -1,0 +1,400 @@
+{
+  "name": "GESTION MAILS V3 - Classement + Impression",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "filters": {},
+        "options": {}
+      },
+      "type": "n8n-nodes-base.microsoftOutlookTrigger",
+      "typeVersion": 1,
+      "position": [
+        48,
+        112
+      ],
+      "id": "8b8bcd27-e626-44ef-a652-cb95947cbba8",
+      "name": "Microsoft Outlook Trigger",
+      "credentials": {
+        "microsoftOutlookOAuth2Api": {
+          "id": "PTXDeTl69btdj95G",
+          "name": "Microsoft Outlook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "74a19292-0677-410d-ab31-2b5bb115a78e",
+              "leftValue": "={{$json.body.sujet}}",
+              "rightValue": "CLASSEMENT",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        304,
+        112
+      ],
+      "id": "e92b4195-e715-42af-945f-fea129bec528",
+      "name": "Si CLASSEMENT"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "b1234567-0000-0000-0000-000000000001",
+              "leftValue": "={{$json.body.sujet}}",
+              "rightValue": "PIECES",
+              "operator": {
+                "type": "string",
+                "operation": "contains"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        304,
+        400
+      ],
+      "id": "f1234567-0000-0000-0000-000000000002",
+      "name": "Si PIECES"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sujet email : {{ $json.body.sujet }}\nCorps email : {{ $json.body.corps }}\n\nExtrais les informations de classement en JSON strict, sans markdown :\n{\n  \"client\": \"nom du client\",\n  \"type_document\": \"TVA ou Comptabilité ou Impôts ou Salaires ou Clôtures ou Divers\",\n  \"annee\": \"2026\"\n}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Tu es un assistant de classement pour une fiduciaire suisse. Réponds UNIQUEMENT avec le JSON demandé, sans explication ni markdown."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        544,
+        96
+      ],
+      "id": "e5471fbe-aa58-4b13-9913-d042dfc933da",
+      "name": "Extraction LLM"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "mistralai/Ministral-3-14B-Instruct-2512",
+          "mode": "list",
+          "cachedResultName": "mistralai/Ministral-3-14B-Instruct-2512"
+        },
+        "responsesApiEnabled": false,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        544,
+        416
+      ],
+      "id": "7dc5c08e-b864-4e2c-8e6f-011a3bb2321c",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "6rK3RJvkv1Xo1x1N",
+          "name": "OpenAI account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse la reponse du LLM et prepare le payload pour le pipeline complet\nconst text = $input.first().json.text;\nconst clean = text.replace(/```json|```/g, '').trim();\nconst parsed = JSON.parse(clean);\n\nconst pieces_jointes = $('Microsoft Outlook Trigger').first().json.body.pieces_jointes;\n\nreturn [{\n  json: {\n    client: parsed.client,\n    type_document: parsed.type_document,\n    annee: parsed.annee,\n    pieces_jointes: pieces_jointes || [],\n    imprimer: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        96
+      ],
+      "id": "54474326-d616-4ce2-8692-8e01410a2cb5",
+      "name": "Preparer Classement"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare les pieces jointes pour impression uniquement\nconst pieces_jointes = $('Microsoft Outlook Trigger').first().json.body.pieces_jointes;\n\n// Pour PIECES, on envoie au pipeline complet avec impression activee\n// Le client/type/annee sont generiques car le but est d'imprimer\nreturn [{\n  json: {\n    client: 'A_CLASSER',\n    type_document: 'Pieces',\n    annee: new Date().getFullYear().toString(),\n    pieces_jointes: pieces_jointes || [],\n    imprimer: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        560
+      ],
+      "id": "a1234567-0000-0000-0000-000000000003",
+      "name": "Preparer Impression"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5000/pipeline_complet",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"client\": \"{{$json.client}}\",\n  \"type_document\": \"{{$json.type_document}}\",\n  \"annee\": \"{{$json.annee}}\",\n  \"pieces_jointes\": {{JSON.stringify($json.pieces_jointes)}},\n  \"imprimer\": {{$json.imprimer}}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1152,
+        96
+      ],
+      "id": "dd0c4153-eef8-4484-8d1e-ba7c16f7d122",
+      "name": "Pipeline Classement"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:5000/pipeline_complet",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"client\": \"{{$json.client}}\",\n  \"type_document\": \"{{$json.type_document}}\",\n  \"annee\": \"{{$json.annee}}\",\n  \"pieces_jointes\": {{JSON.stringify($json.pieces_jointes)}},\n  \"imprimer\": {{$json.imprimer}}\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        912,
+        560
+      ],
+      "id": "b2345678-0000-0000-0000-000000000004",
+      "name": "Pipeline Impression"
+    },
+    {
+      "parameters": {
+        "content": "## Trigger Email\nSurveille la boite Outlook\ntoutes les minutes",
+        "height": 336,
+        "color": 7
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "73a08cda-5f27-4036-8845-e4b34c516f43",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Filtres sujet\nCLASSEMENT = classer dans dossier client\nPIECES = classifier + imprimer",
+        "height": 336,
+        "width": 224,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        236,
+        0
+      ],
+      "id": "4883a461-0cd2-4ef3-abfb-5dea57849f81",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Extraction donnees client\nLLM identifie client, type, annee",
+        "height": 336,
+        "width": 336,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        480,
+        0
+      ],
+      "id": "c0385fe3-7e56-44f4-83be-660945ac8eb9",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## Preparation\nMise en forme pour le serveur",
+        "height": 336,
+        "width": 208,
+        "color": 4
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        848,
+        0
+      ],
+      "id": "0a802c4f-d676-4ddf-93f4-a81f45e557ef",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## Pipeline complet\nserveur.py fait tout :\n- Cree le dossier client\n- Sauve les fichiers\n- Classifie par code fiscal\n- Imprime dans l'ordre",
+        "height": 336,
+        "width": 280,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1088,
+        0
+      ],
+      "id": "cec4b01e-d35a-4e35-8f1c-7388e332cfa6",
+      "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## Branche PIECES\nImpression directe sans classement client",
+        "height": 240,
+        "width": 448,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        480,
+        460
+      ],
+      "id": "d1234567-0000-0000-0000-000000000005",
+      "name": "Sticky Note5"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Microsoft Outlook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Si CLASSEMENT",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Si PIECES",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Si CLASSEMENT": {
+      "main": [
+        [
+          {
+            "node": "Extraction LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Si PIECES": {
+      "main": [
+        [
+          {
+            "node": "Preparer Impression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraction LLM": {
+      "main": [
+        [
+          {
+            "node": "Preparer Classement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Extraction LLM",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparer Classement": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Classement",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparer Impression": {
+      "main": [
+        [
+          {
+            "node": "Pipeline Impression",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "bdc06fb4-fb32-5def-cce8-2b1964d4e564",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "0fde526d6dcb316e3ce6e0c28b2fdf115fb9fe3135a75327ea2179e490004905"
+  },
+  "id": "7sUxRR6LgYfhw8NR",
+  "tags": []
+}
