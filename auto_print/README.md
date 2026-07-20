@@ -49,11 +49,25 @@ Pour desinstaller : double-clique sur `uninstall_startup.bat`.
 
 ## Notes
 
-- Pour les PDF et les images, l'impression se fait generalement sans
-  ouvrir de fenetre visible (via l'application par defaut associee).
-- Pour les fichiers Office (Word/Excel/PowerPoint), l'application
-  correspondante doit etre installee ; elle peut s'ouvrir brievement le
-  temps d'imprimer avant de se refermer.
+- **Images (JPG/PNG/BMP/GIF/TIFF)** : impression totalement silencieuse via
+  `mspaint /pt`, aucune fenetre ne s'affiche.
+- **PDF** : silencieux si `SumatraPDF.exe` (portable, gratuit) est place dans
+  ce meme dossier `auto_print` — voir "Impression PDF silencieuse" ci-dessous.
+  Sans cela, l'application PDF par defaut (Edge, Adobe...) peut s'ouvrir ou
+  afficher une boite de dialogue.
+- **Office (Word/Excel/PowerPoint)** : l'application correspondante doit
+  etre installee ; elle peut s'ouvrir brievement le temps d'imprimer avant
+  de se refermer, en general sans boite de dialogue.
 - Le script attend que la taille du fichier arrete de changer avant de
   l'imprimer, pour eviter d'imprimer un fichier encore en cours de copie
   ou de telechargement.
+
+## Impression PDF silencieuse (optionnel mais recommande)
+
+1. Telecharge la version portable de SumatraPDF (gratuit, open source) :
+   https://www.sumatrapdfreader.org/download-free-pdf-viewer
+2. Renomme l'executable telecharge en `SumatraPDF.exe` et place-le dans ce
+   dossier `auto_print`, a cote de `watch_and_print.py`.
+3. Relance le script (ou `install_startup.bat` si deja installe) : les PDF
+   deposes dans le dossier surveille s'imprimeront desormais sans aucune
+   fenetre.

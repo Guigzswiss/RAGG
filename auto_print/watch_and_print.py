@@ -13,6 +13,7 @@ dans un sous-dossier "Imprimes", "Erreurs" ou "Non supportes" selon le resultat.
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -26,12 +27,17 @@ IGNORED_SUBFOLDER = "Non supportes"
 POLL_INTERVAL_SECONDS = 2
 STABLE_CHECKS = 2  # verifications consecutives a taille identique avant de traiter le fichier
 MAX_STABILITY_WAIT_SECONDS = 30
+PRINT_TIMEOUT_SECONDS = 30
 
-SUPPORTED_EXTENSIONS = {
-    ".pdf",
-    ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff",
-    ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".tif", ".tiff"}
+PDF_EXTENSIONS = {".pdf"}
+OFFICE_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | PDF_EXTENSIONS | OFFICE_EXTENSIONS
+
+# SumatraPDF.exe (portable, gratuit) place a cote de ce script permet une impression
+# PDF totalement silencieuse. S'il est absent, on retombe sur le verbe "print" de
+# Windows (qui peut ouvrir l'appli associee).
+SUMATRA_PATH = Path(__file__).resolve().parent / "SumatraPDF.exe"
 
 LOG_FILE = WATCH_FOLDER / "auto_print.log"
 
@@ -88,8 +94,42 @@ def unique_destination(folder: Path, name: str) -> Path:
     return folder / f"{stem}_{timestamp}{suffix}"
 
 
+def get_default_printer() -> str:
+    result = subprocess.run(
+        [
+            "powershell", "-NoProfile", "-Command",
+            "(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default }).Name",
+        ],
+        capture_output=True, text=True, timeout=15, check=True,
+    )
+    name = result.stdout.strip()
+    if not name:
+        raise RuntimeError("Impossible de determiner l'imprimante par defaut.")
+    return name
+
+
 def print_file(path: Path) -> None:
-    """Lance l'impression via l'application associee et l'imprimante par defaut de Windows."""
+    """Imprime sans afficher de fenetre, avec la methode la plus fiable pour chaque type de fichier."""
+    extension = path.suffix.lower()
+
+    if extension in IMAGE_EXTENSIONS:
+        # mspaint sait imprimer une image en silence, sans assistant, via /pt.
+        printer = get_default_printer()
+        subprocess.run(
+            ["mspaint.exe", "/pt", str(path), printer],
+            check=True, timeout=PRINT_TIMEOUT_SECONDS,
+        )
+        return
+
+    if extension in PDF_EXTENSIONS and SUMATRA_PATH.exists():
+        subprocess.run(
+            [str(SUMATRA_PATH), "-print-to-default", "-silent", "-exit-when-done", str(path)],
+            check=True, timeout=PRINT_TIMEOUT_SECONDS,
+        )
+        return
+
+    # PDF sans SumatraPDF, ou document Office : on utilise le verbe "print" de Windows,
+    # qui declenche l'application associee (peut s'ouvrir brievement).
     os.startfile(str(path), "print")
 
 
