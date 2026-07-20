@@ -38,6 +38,7 @@ SUPPORTED_EXTENSIONS = IMAGE_EXTENSIONS | PDF_EXTENSIONS | OFFICE_EXTENSIONS
 # PDF totalement silencieuse. S'il est absent, on retombe sur le verbe "print" de
 # Windows (qui peut ouvrir l'appli associee).
 SUMATRA_PATH = Path(__file__).resolve().parent / "SumatraPDF.exe"
+IMAGE_PRINT_SCRIPT = Path(__file__).resolve().parent / "print_image.ps1"
 
 LOG_FILE = WATCH_FOLDER / "auto_print.log"
 
@@ -94,29 +95,18 @@ def unique_destination(folder: Path, name: str) -> Path:
     return folder / f"{stem}_{timestamp}{suffix}"
 
 
-def get_default_printer() -> str:
-    result = subprocess.run(
-        [
-            "powershell", "-NoProfile", "-Command",
-            "(Get-CimInstance -ClassName Win32_Printer | Where-Object { $_.Default }).Name",
-        ],
-        capture_output=True, text=True, timeout=15, check=True,
-    )
-    name = result.stdout.strip()
-    if not name:
-        raise RuntimeError("Impossible de determiner l'imprimante par defaut.")
-    return name
-
-
 def print_file(path: Path) -> None:
     """Imprime sans afficher de fenetre, avec la methode la plus fiable pour chaque type de fichier."""
     extension = path.suffix.lower()
 
     if extension in IMAGE_EXTENSIONS:
-        # mspaint sait imprimer une image en silence, sans assistant, via /pt.
-        printer = get_default_printer()
+        # Dessine l'image directement sur l'imprimante par defaut via .NET, sans
+        # ouvrir aucune application (Paint /pt n'est plus fiable sur Windows 11).
         subprocess.run(
-            ["mspaint.exe", "/pt", str(path), printer],
+            [
+                "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+                "-File", str(IMAGE_PRINT_SCRIPT), "-Path", str(path),
+            ],
             check=True, timeout=PRINT_TIMEOUT_SECONDS,
         )
         return

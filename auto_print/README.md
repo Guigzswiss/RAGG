@@ -50,7 +50,8 @@ Pour desinstaller : double-clique sur `uninstall_startup.bat`.
 ## Notes
 
 - **Images (JPG/PNG/BMP/GIF/TIFF)** : impression totalement silencieuse via
-  `mspaint /pt`, aucune fenetre ne s'affiche.
+  un petit script PowerShell (`print_image.ps1`, fourni) qui dessine l'image
+  directement sur l'imprimante par defaut sans ouvrir aucune application.
 - **PDF** : silencieux si `SumatraPDF.exe` (portable, gratuit) est place dans
   ce meme dossier `auto_print` — voir "Impression PDF silencieuse" ci-dessous.
   Sans cela, l'application PDF par defaut (Edge, Adobe...) peut s'ouvrir ou
