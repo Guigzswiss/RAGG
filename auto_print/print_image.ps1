@@ -8,6 +8,7 @@ Add-Type -AssemblyName System.Drawing
 $image = [System.Drawing.Image]::FromFile($Path)
 try {
     $printDocument = New-Object System.Drawing.Printing.PrintDocument
+    $printDocument.DefaultPageSettings.Landscape = ($image.Width -gt $image.Height)
     $printDocument.add_PrintPage({
         param($sender, $e)
         $bounds = $e.MarginBounds
